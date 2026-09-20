@@ -23,3 +23,21 @@ uv run python -m cooking_assistant_chatbot.data.ingest
 ```
 
 `data/app.db` (SQLite)에 레시피가 적재됩니다.
+
+## 레시피 검색 인덱스 빌드
+
+```bash
+uv run python -m cooking_assistant_chatbot.rag.build_index
+```
+
+## 챗봇 실행
+
+미리 준비할 것:
+1. [Ollama](https://ollama.com) 설치 후 `ollama pull qwen3:14b`
+2. 위 레시피 수집 + 인덱스 빌드 완료
+
+```bash
+uv run python -m cooking_assistant_chatbot.app
+```
+
+`http://127.0.0.1:7860`에서 접속할 수 있습니다.

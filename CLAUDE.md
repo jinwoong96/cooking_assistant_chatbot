@@ -85,6 +85,12 @@ Known product-level quirk to revisit: total recipe price sums the cheapest
 water or 200g of garlic to use 10g), which overstates real marginal cost —
 fine for MVP, but worth reconsidering (e.g. excluding common pantry staples,
 or showing cost-per-recipe-use) once this is actually used day to day.
+Known latency quirk: a recipe with ~18 uncached ingredients took ~100s+
+end-to-end in real browser testing (enuri's 1 req/sec throttle dominates,
+plus two sequential local-LLM calls). Not fixed for MVP — parallelizing
+price lookups would violate the crawl-delay's intent even across multiple
+client instances, so the fix, if pursued, should be UI-side (streaming/
+progress indication) rather than trying to go faster.
 
 ## Development environment
 
