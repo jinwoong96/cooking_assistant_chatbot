@@ -10,7 +10,7 @@ project for building a local-first RAG + tool-calling AI agent.
 Core flow: user message -> intent router (recipe/price request vs. general chat,
 only the router is built for MVP) -> RAG recipe search -> ingredient extraction/
 normalization (rule-based, with LLM fallback for ambiguous cases) -> tool-calling
-lookup of ingredient prices via the 11번가 Open API -> combined response.
+lookup of ingredient prices by scraping 에누리(enuri.com) -> combined response.
 
 Stack decisions:
 - Backend: Python (FastAPI)
@@ -27,24 +27,42 @@ Stack decisions:
   any crawler)
 - Deployment: localhost only for now; if remote access is needed later, add
   Tailscale + Gradio `auth=` rather than redesigning anything
-- Ingredient price lookup: **11번가 Open API** (`ElevenStClient`). The original
-  plan was the Naver Shopping search API, but it was officially shut down
-  2026-07-31 (confirmed via developers.naver.com notice #32564) with no
-  replacement. Other candidates considered and rejected for now:
-  - 쿠팡파트너스 API: requires generating 150,000원 in actual affiliate sales
-    before the API is even activated, plus a 10 calls/hour, 10 items/call
-    limit once approved — not usable for a not-yet-launched personal project.
-  - 다나와/에누리 등 가격비교 사이트 크롤링: no official API, would need the
-    same kind of ToS/robots.txt legal review already done for recipe crawling
-    (commerce data, likely higher legal sensitivity than recipe text).
-  Revisit these if 11번가 turns out to be too limited once actually used —
-  don't re-research from scratch, this section already has the tradeoffs.
+- Ingredient price lookup: scrapes **에누리(enuri.com)** search results
+  (`EnuriClient`, `pricing/enuri_client.py`), reading the page's
+  `<script type="application/ld+json">` schema.org block (stable, semantic —
+  not the React/Next.js CSS-module markup, which changes every redeploy).
+  Results are cached in SQLite (`price_cache` table, 24h TTL, see
+  `pricing/cache.py`) so repeat lookups don't re-hit the site. The client
+  self-throttles to >=1 req/sec per price.enuri.com's robots.txt Crawl-delay.
+  All other options were tried and ruled out first, in this order — don't
+  re-research from scratch, revisit only if 에누리 itself becomes a problem
+  (e.g. starts blocking or its markup changes in a way that breaks scraping):
+  1. **네이버쇼핑 검색 API** — officially shut down 2026-07-31 (confirmed via
+     developers.naver.com notice #32564), no replacement offered.
+  2. **쿠팡파트너스 API** — requires generating 150,000원 in actual affiliate
+     sales before the API even activates, plus 10 calls/hour once approved.
+  3. **11번가 Open API** — looked promising (documented "상품검색" as a plain
+     category, no seller framing) but its account signup turned out to
+     require a 사업자등록번호 (business registration number) — not usable by
+     an individual.
+  4. **옥션/G마켓 (ESM) API** — checked and ruled out without even trying to
+     register: their listed functions (AddItem/ReviseItem/GetSellingItemList)
+     are for sellers managing their own listings, not general product search.
+  다나와 was also considered alongside 에누리 but rejected in favor of it:
+  same lack of an official API, but 다나와's robots.txt Crawl-delay is 10s
+  vs. 에누리's 1s — 10s/ingredient makes an interactive chatbot response
+  impractical (a 10-ingredient recipe would take 100+ seconds).
 
 Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
 relationship search, general free-form cooking conversation (router exists,
 handler logic doesn't yet), larger-scale crawling, multi-user auth, LLM-based
 correction pass for ambiguous ingredient names (current parser is rule-based
 only; see `pricing/ingredient_parser.py` docstring for known edge cases).
+Known product-level quirk to revisit: total recipe price sums the cheapest
+*purchasable package* for every ingredient (e.g. buying a whole bottle of
+water or 200g of garlic to use 10g), which overstates real marginal cost —
+fine for MVP, but worth reconsidering (e.g. excluding common pantry staples,
+or showing cost-per-recipe-use) once this is actually used day to day.
 
 ## Development environment
 
@@ -53,8 +71,8 @@ only; see `pricing/ingredient_parser.py` docstring for known edge cases).
 
 ## Paid API approval gate
 
-- The local Ollama model and the 11번가 Open API are free (rate-limited only)
-  and can be used/tested freely without asking.
+- The local Ollama model and the 에누리 price scraper are free (rate-limited
+  only, by our own throttle) and can be used/tested freely without asking.
 - Any code path that calls a **paid cloud LLM API** (e.g. Claude, OpenAI, or any
   other billed provider reached through LiteLLM) must get the user's explicit
   approval **before** that test/run happens. Never run a paid-API test

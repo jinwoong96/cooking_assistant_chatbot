@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
+
 from pydantic import BaseModel
 
 from ..data.models import Recipe
-from .eleven_st_client import ElevenStClient, ShoppingItem
+from .cache import get_cached_price, set_cached_price
+from .enuri_client import EnuriClient, ShoppingItem
 from .ingredient_parser import parse_ingredients
 
 
@@ -28,8 +31,14 @@ class RecipePriceEstimate(BaseModel):
         return [p.ingredient_name for p in self.ingredient_prices if p.cheapest_item is None]
 
 
-def estimate_recipe_price(recipe: Recipe, client: ElevenStClient) -> RecipePriceEstimate:
+def estimate_recipe_price(
+    recipe: Recipe, client: EnuriClient, conn: sqlite3.Connection
+) -> RecipePriceEstimate:
     """Parse a recipe's ingredients and look up the cheapest matching product for each.
+
+    Prices are cached in SQLite (see `pricing.cache`) so repeated lookups of
+    the same ingredient don't re-scrape enuri.com — both for latency and to
+    keep request volume low (see CLAUDE.md's crawling notes).
 
     This is the plain function that a future tool-calling layer would expose
     to the LLM agent; wiring that up is a separate, later feature.
@@ -38,8 +47,13 @@ def estimate_recipe_price(recipe: Recipe, client: ElevenStClient) -> RecipePrice
 
     ingredient_prices = []
     for ingredient in parsed:
-        items = client.search_cheapest(ingredient.name, page_size=1)
-        cheapest = items[0] if items else None
+        cheapest = get_cached_price(conn, ingredient.name)
+        if cheapest is None:
+            items = client.search_cheapest(ingredient.name, limit=1)
+            cheapest = items[0] if items else None
+            if cheapest is not None:
+                set_cached_price(conn, ingredient.name, cheapest)
+
         ingredient_prices.append(
             IngredientPrice(
                 ingredient_name=ingredient.name,

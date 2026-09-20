@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS recipes (
     step_image_urls_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_recipes_name ON recipes(name);
+
+CREATE TABLE IF NOT EXISTS price_cache (
+    ingredient_name TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    brand TEXT,
+    link TEXT,
+    fetched_at TEXT NOT NULL
+);
 """
 
 
