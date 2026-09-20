@@ -10,7 +10,7 @@ project for building a local-first RAG + tool-calling AI agent.
 Core flow: user message -> intent router (recipe/price request vs. general chat,
 only the router is built for MVP) -> RAG recipe search -> ingredient extraction/
 normalization (rule-based, with LLM fallback for ambiguous cases) -> tool-calling
-lookup of ingredient prices via the Naver Shopping API -> combined response.
+lookup of ingredient prices via the 11번가 Open API -> combined response.
 
 Stack decisions:
 - Backend: Python (FastAPI)
@@ -27,10 +27,24 @@ Stack decisions:
   any crawler)
 - Deployment: localhost only for now; if remote access is needed later, add
   Tailscale + Gradio `auth=` rather than redesigning anything
+- Ingredient price lookup: **11번가 Open API** (`ElevenStClient`). The original
+  plan was the Naver Shopping search API, but it was officially shut down
+  2026-07-31 (confirmed via developers.naver.com notice #32564) with no
+  replacement. Other candidates considered and rejected for now:
+  - 쿠팡파트너스 API: requires generating 150,000원 in actual affiliate sales
+    before the API is even activated, plus a 10 calls/hour, 10 items/call
+    limit once approved — not usable for a not-yet-launched personal project.
+  - 다나와/에누리 등 가격비교 사이트 크롤링: no official API, would need the
+    same kind of ToS/robots.txt legal review already done for recipe crawling
+    (commerce data, likely higher legal sensitivity than recipe text).
+  Revisit these if 11번가 turns out to be too limited once actually used —
+  don't re-research from scratch, this section already has the tradeoffs.
 
 Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
 relationship search, general free-form cooking conversation (router exists,
-handler logic doesn't yet), larger-scale crawling, multi-user auth.
+handler logic doesn't yet), larger-scale crawling, multi-user auth, LLM-based
+correction pass for ambiguous ingredient names (current parser is rule-based
+only; see `pricing/ingredient_parser.py` docstring for known edge cases).
 
 ## Development environment
 
@@ -39,7 +53,7 @@ handler logic doesn't yet), larger-scale crawling, multi-user auth.
 
 ## Paid API approval gate
 
-- The local Ollama model and the Naver Shopping API are free (rate-limited only)
+- The local Ollama model and the 11번가 Open API are free (rate-limited only)
   and can be used/tested freely without asking.
 - Any code path that calls a **paid cloud LLM API** (e.g. Claude, OpenAI, or any
   other billed provider reached through LiteLLM) must get the user's explicit
