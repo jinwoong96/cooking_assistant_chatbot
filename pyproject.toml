@@ -7,7 +7,12 @@ authors = [
     { name = "jinwoong96", email = "wlsdnd921@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.3",
+]
 
 [project.scripts]
 cooking-assistant-chatbot = "cooking_assistant_chatbot:main"
@@ -15,3 +20,9 @@ cooking-assistant-chatbot = "cooking_assistant_chatbot:main"
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "respx>=0.23.1",
+]
