@@ -7,10 +7,15 @@ dish in natural language; the app finds a recipe and looks up the cheapest price
 for each ingredient so the user can cook it affordably. This is also a learning
 project for building a local-first RAG + tool-calling AI agent.
 
-Core flow: user message -> intent router (recipe/price request vs. general chat,
-only the router is built for MVP) -> RAG recipe search -> ingredient extraction/
-normalization (rule-based, with LLM fallback for ambiguous cases) -> tool-calling
-lookup of ingredient prices by scraping 에누리(enuri.com) -> combined response.
+Core flow (implemented in `agent/router.py` + `agent/pipeline.py`): user
+message -> intent router (single LLM tool-call that both classifies
+recipe-request vs. general-chat *and*, for recipe requests, extracts the menu
+name in one shot) -> RAG recipe search -> ingredient extraction/normalization
+(rule-based, with LLM fallback for ambiguous cases still deferred) ->
+lookup of ingredient prices by scraping 에누리(enuri.com) -> a final LLM call
+composes the reply from that data. general_chat is a real (if simple) LLM
+passthrough already, not a stub — only *specialized* general-conversation
+handling (e.g. substitution advice grounded in the recipe DB) is deferred.
 
 Stack decisions:
 - Backend: Python (FastAPI)
@@ -27,6 +32,15 @@ Stack decisions:
   cloud) is just changing `settings.llm_model`; RAG/tool-calling/routing
   orchestration itself is hand-built, not LangChain/LangGraph (deliberately
   deferred to a future project).
+  **Known quirk**: at default settings, qwen3:14b sometimes ignores a long
+  data-summarization prompt and free-associates a generic reply instead of
+  using the provided recipe/price data — reproduced once, not consistently.
+  Fixed for the recipe-compose step in `agent/pipeline.py` with (a) an
+  explicit system prompt stating this is a data-grounded reply, not the
+  start of a conversation, and telling it not to ask the user questions back,
+  and (b) `temperature=0.3` instead of the default. Re-tested 3x after the
+  fix, all correctly formatted. If a similar ignore-the-context failure shows
+  up elsewhere, apply the same fix rather than re-diagnosing from scratch.
 - Vector store: Chroma, embeddings: BGE-M3
 - Structured data: SQLite
 - Recipe data: public datasets first (식약처 COOKRCP01, 농식품 공공데이터 레시피 API),

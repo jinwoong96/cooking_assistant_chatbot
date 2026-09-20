@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from chromadb.api.types import Documents, EmbeddingFunction
 
 _DIM = 64
@@ -39,3 +41,43 @@ class FakeEmbeddingFunction(EmbeddingFunction[Documents]):
         if norm == 0:
             return vector
         return [v / norm for v in vector]
+
+
+class _FakeFunction:
+    def __init__(self, name: str, arguments: str):
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeToolCall:
+    def __init__(self, name: str, arguments: str):
+        self.function = _FakeFunction(name, arguments)
+
+
+class _FakeMessage:
+    def __init__(self, content: str | None = None, tool_calls: list | None = None):
+        self.content = content
+        self.tool_calls = tool_calls
+
+
+class _FakeChoice:
+    def __init__(self, message: _FakeMessage):
+        self.message = message
+
+
+class FakeLLMResponse:
+    """Stand-in for a litellm.completion() result, shaped just enough to
+    match what our code reads off it (response.choices[0].message.*)."""
+
+    def __init__(self, message: _FakeMessage):
+        self.choices = [_FakeChoice(message)]
+
+
+def fake_tool_call_response(name: str, arguments: dict) -> FakeLLMResponse:
+    return FakeLLMResponse(
+        _FakeMessage(tool_calls=[_FakeToolCall(name, json.dumps(arguments))])
+    )
+
+
+def fake_text_response(content: str) -> FakeLLMResponse:
+    return FakeLLMResponse(_FakeMessage(content=content, tool_calls=None))
