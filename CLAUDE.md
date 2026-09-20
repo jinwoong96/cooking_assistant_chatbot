@@ -15,10 +15,18 @@ lookup of ingredient prices by scraping 에누리(enuri.com) -> combined respons
 Stack decisions:
 - Backend: Python (FastAPI)
 - Frontend: Gradio (prototype UI)
-- LLM: local model (Qwen2.5-14B or Qwen3-14B, Q4_K_M) served via Ollama, sized for
-  16GB VRAM (AMD RX 9060 XT). Provider switching (local vs. cloud) goes through
-  LiteLLM; RAG/tool-calling/routing orchestration is hand-built, not LangChain/
-  LangGraph (deliberately deferred to a future project).
+- LLM: **qwen3:14b via Ollama** (settled from the Qwen2.5-14B/Qwen3-14B
+  candidates, Q4 quant, ~9.3GB, sized for 16GB VRAM / AMD RX 9060 XT).
+  Ollama installed via `winget install Ollama.Ollama`; pull the model with
+  `ollama pull qwen3:14b`. Reached through `llm/client.py`, a thin wrapper
+  around `litellm.completion(model="ollama_chat/qwen3:14b", ...)` — the
+  `ollama_chat/` prefix (not `ollama/`) is required for proper tool-calling
+  support. Verified working end-to-end: plain chat and OpenAI-style function
+  calling (model correctly emits `tool_calls` with parsed arguments) both
+  confirmed against the real local model. Provider switching (local vs.
+  cloud) is just changing `settings.llm_model`; RAG/tool-calling/routing
+  orchestration itself is hand-built, not LangChain/LangGraph (deliberately
+  deferred to a future project).
 - Vector store: Chroma, embeddings: BGE-M3
 - Structured data: SQLite
 - Recipe data: public datasets first (식약처 COOKRCP01, 농식품 공공데이터 레시피 API),

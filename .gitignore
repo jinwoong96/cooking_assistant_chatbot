@@ -15,3 +15,6 @@ data/cache/
 
 .pytest_cache/
 .ruff_cache/
+
+# Claude Code session-local state, not project content
+.claude/
