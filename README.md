@@ -56,3 +56,7 @@ uv run python -m cooking_assistant_chatbot.app
 ```
 
 `http://127.0.0.1:7860`에서 접속할 수 있습니다.
+
+로컬에서만 쓸 땐 그냥 이대로 두면 됩니다. 나중에 Tailscale 등으로 외부에서도
+접속 가능하게 열 계획이면, `.env`의 `APP_PASSWORD`를 채워서 로그인을 요구하도록
+하세요 (비워두면 로그인 없이 바로 열립니다).
