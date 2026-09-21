@@ -40,8 +40,15 @@ CREATE TABLE IF NOT EXISTS price_cache (
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
+    """Open a connection, usable from any thread.
+
+    `check_same_thread=False` because the Gradio UI runs each chat turn in a
+    worker thread from a pool, not the thread that created this connection.
+    We don't do concurrent writes from multiple threads at once (single-user
+    local app), so sqlite3's own file-level locking is enough here.
+    """
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn

@@ -1,2 +1,4 @@
 def main() -> None:
-    print("Hello from cooking-assistant-chatbot!")
+    from .app import main as app_main
+
+    app_main()
