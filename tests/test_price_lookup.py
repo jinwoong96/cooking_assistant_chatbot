@@ -112,3 +112,68 @@ def test_estimate_recipe_price_leaves_portioned_cost_none_when_units_mismatch(tm
     estimate = estimate_recipe_price(recipe, client, _conn(tmp_path))
 
     assert estimate.ingredient_prices[0].portioned_cost is None
+
+
+class _RecordingClient:
+    """Stub that records every query it's asked to search, and returns a
+    canned result only for queries in `known`."""
+
+    def __init__(self, known: dict[str, int]):
+        self._known = known
+        self.queries: list[str] = []
+
+    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+        self.queries.append(query)
+        if query not in self._known:
+            return []
+        return [ShoppingItem(title=f"{query} 상품", price=self._known[query])]
+
+
+def test_estimate_recipe_price_corrects_ambiguous_name_before_searching(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="얇게 썬 돼지고기(100g)")
+    client = _RecordingClient({"돼지고기": 5000})
+
+    def correct_name(name, context):
+        assert name == "얇게 썬 돼지고기"
+        return "돼지고기"
+
+    estimate = estimate_recipe_price(
+        recipe, client, _conn(tmp_path), correct_name=correct_name
+    )
+
+    assert client.queries == ["돼지고기"]  # corrected before ever searching the raw name
+    assert estimate.ingredient_prices[0].cheapest_item.price == 5000
+
+
+def test_estimate_recipe_price_corrects_as_fallback_after_empty_search(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="이상한재료(10g)")
+    client = _RecordingClient({"양파": 1000})
+
+    estimate = estimate_recipe_price(
+        recipe, client, _conn(tmp_path), correct_name=lambda name, ctx: "양파"
+    )
+
+    assert client.queries == ["이상한재료", "양파"]
+    assert estimate.ingredient_prices[0].cheapest_item.price == 1000
+
+
+def test_estimate_recipe_price_skips_ingredient_when_correction_says_not_real(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="간 맞출 때")
+    client = _RecordingClient({})
+
+    estimate = estimate_recipe_price(
+        recipe, client, _conn(tmp_path), correct_name=lambda name, ctx: None
+    )
+
+    assert client.queries == []  # never searched at all
+    assert estimate.ingredient_prices[0].cheapest_item is None
+
+
+def test_estimate_recipe_price_without_correct_name_behaves_as_before(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="얇게 썬 돼지고기(100g)")
+    client = _RecordingClient({})
+
+    estimate = estimate_recipe_price(recipe, client, _conn(tmp_path))
+
+    assert client.queries == ["얇게 썬 돼지고기"]
+    assert estimate.ingredient_prices[0].cheapest_item is None

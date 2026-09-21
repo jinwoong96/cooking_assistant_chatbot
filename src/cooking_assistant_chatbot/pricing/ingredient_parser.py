@@ -27,7 +27,7 @@ _LABEL_WORDS = {
 _DIGIT_RE = re.compile(r"\d")
 _LEADING_BRACKET_RE = re.compile(r"^\[[^\]]*\]\s*")
 _LEADING_LABEL_RE = re.compile(r"^재료\s*")
-_LINE_LABEL_RE = re.compile(r"^([가-힣A-Za-z0-9]{1,10})\s*[:：]\s*(.+)$")
+_LINE_LABEL_RE = re.compile(r"^([가-힣A-Za-z0-9][가-힣A-Za-z0-9 ]{0,14})\s*[:：]\s*(.+)$")
 _TRAILING_CHARS = " (（-:：·"
 _UNSPECIFIED_QUANTITY_SUFFIXES = ("적당량", "약간")
 
@@ -64,7 +64,7 @@ def _strip_leading_label_word(token: str) -> str:
 
 
 def _strip_line_label_prefix(line: str) -> str:
-    line = line.strip().lstrip("-·").strip()
+    line = line.strip().lstrip("-·●•*").strip()
     match = _LINE_LABEL_RE.match(line)
     if match:
         return match.group(2)

@@ -7,6 +7,7 @@ from ..llm.client import chat
 from ..pricing.enuri_client import EnuriClient
 from ..pricing.price_lookup import RecipePriceEstimate, estimate_recipe_price
 from ..rag.search import RecipeSearcher
+from .ingredient_correction import correct_ingredient_name
 from .router import RouteResult, route
 
 __all__ = ["handle_message", "RouteResult"]
@@ -99,5 +100,7 @@ def handle_message(
         return f"'{result.menu_name}' 레시피를 찾지 못했어요. 다른 메뉴로 물어봐주실래요?"
 
     recipe = recipes[0]
-    estimate = estimate_recipe_price(recipe, price_client, conn)
+    estimate = estimate_recipe_price(
+        recipe, price_client, conn, correct_name=correct_ingredient_name
+    )
     return _compose_recipe_reply(recipe, estimate)
