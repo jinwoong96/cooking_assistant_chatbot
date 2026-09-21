@@ -80,11 +80,26 @@ relationship search, general free-form cooking conversation (router exists,
 handler logic doesn't yet), larger-scale crawling, multi-user auth, LLM-based
 correction pass for ambiguous ingredient names (current parser is rule-based
 only; see `pricing/ingredient_parser.py` docstring for known edge cases).
-Known product-level quirk to revisit: total recipe price sums the cheapest
-*purchasable package* for every ingredient (e.g. buying a whole bottle of
-water or 200g of garlic to use 10g), which overstates real marginal cost —
-fine for MVP, but worth reconsidering (e.g. excluding common pantry staples,
-or showing cost-per-recipe-use) once this is actually used day to day.
+**Resolved**: the "total price overstates real cost" quirk noted below was
+addressed by adding a portioned-cost estimate alongside the full purchase
+price (`pricing/unit_parser.py` + `IngredientPrice.portioned_cost` /
+`RecipePriceEstimate.total_portioned_cost` in `pricing/price_lookup.py`).
+`parse_quantity()` extracts a weight (g/kg) or volume (ml/L) from free text;
+when both the recipe's needed amount and the product title's package size
+parse to the *same* unit (both weight or both volume), portioned cost =
+package price × (recipe amount / package amount). Deliberately not attempted
+for count-based amounts ("1개", "5구") or vague ones ("약간", "적당량"), or
+when the two sides are different unit kinds (e.g. recipe needs grams of
+sesame oil but the product is sold in ml) — no unit conversion between
+weight and volume is done, even though it's sometimes physically possible
+(density), because that's guessing, not parsing. Ingredients this couldn't
+be computed for still show their full purchase price, just no portioned
+figure; `ingredients_missing_portioned_cost` lists which ones. Verified
+against the real DB: for 닭고기김치찌개, total purchase price was 51,927원
+but total portioned cost was only 5,074원 — 5 of 18 ingredients (물, 참기름,
+청주 — unit mismatch; 청양고추 — no size in title; 달걀 — sold by count)
+couldn't get a portioned figure, which is expected and surfaced to the user
+rather than silently dropped.
 Known latency quirk: a recipe with ~18 uncached ingredients took ~100s+
 end-to-end in real browser testing (enuri's 1 req/sec throttle dominates,
 plus two sequential local-LLM calls). Not fixed for MVP — parallelizing
