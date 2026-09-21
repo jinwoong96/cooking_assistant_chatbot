@@ -80,6 +80,16 @@ relationship search, general free-form cooking conversation (router exists,
 handler logic doesn't yet), larger-scale crawling, multi-user auth, LLM-based
 correction pass for ambiguous ingredient names (current parser is rule-based
 only; see `pricing/ingredient_parser.py` docstring for known edge cases).
+
+**Servings count**: `Recipe.servings` (a computed property in `data/models.py`,
+not a stored column) parses a leading "[N인분]" marker from `ingredients_raw`
+when present. Only ~3.5% of recipes (40/1156) state this — no other field in
+COOKRCP01 reliably gives a serving count (`INFO_WGT` is grams *per* serving,
+not how many servings). Returns None otherwise; the compose-reply system
+prompt in `agent/pipeline.py` explicitly tells the model not to guess or
+mention a serving count when it's None, verified against both a recipe that
+has one (reported "(2인분)") and one that doesn't (reported "제공되지
+않음", didn't fabricate a number).
 **Resolved**: the "total price overstates real cost" quirk noted below was
 addressed by adding a portioned-cost estimate alongside the full purchase
 price (`pricing/unit_parser.py` + `IngredientPrice.portioned_cost` /
