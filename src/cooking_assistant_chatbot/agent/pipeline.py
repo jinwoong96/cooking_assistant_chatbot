@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ..data.models import Recipe
@@ -12,7 +13,36 @@ from .router import RouteResult, route
 
 __all__ = ["handle_message", "RouteResult"]
 
-_GENERAL_CHAT_SYSTEM_PROMPT = "너는 친근한 요리 챗봇이다. 자연스러운 한국어로 대답해라."
+_GENERAL_CHAT_SYSTEM_PROMPT = (
+    "너는 친근한 요리 챗봇이다. 자연스러운 한국어로 대답해라. 사용자가 냉장고에 있는 "
+    "재료로 뭘 해먹을지 묻거나, 비슷한 메뉴를 추천해달라고 하거나, 실제 레시피 데이터를 "
+    "찾아보면 더 정확히 답할 수 있는 질문을 하면 search_recipes 도구로 레시피 DB를 검색해서 "
+    "그 결과를 바탕으로 답해라. 재료 대체처럼 일반 상식으로 충분한 질문은 도구 없이 바로 "
+    "답해도 된다. 이전 대화 맥락을 참고해서 자연스럽게 이어서 대답해라."
+)
+
+_GENERAL_CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_recipes",
+            "description": (
+                "가지고 있는 재료나 원하는 스타일로 레시피 DB를 검색한다. "
+                "'냉장고에 있는 재료로 뭐 해먹지', '비슷한 메뉴 추천' 같은 질문에 사용."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "검색어 (예: '두부 계란', '매콤한 국물요리')",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    }
+]
 
 _COMPOSE_RECIPE_SYSTEM_PROMPT = (
     "너는 요리 정보를 요약해서 알려주는 챗봇이다. 이번 턴은 대화의 시작이 아니라, "
@@ -68,14 +98,67 @@ def _compose_recipe_reply(recipe: Recipe, estimate: RecipePriceEstimate) -> str:
     return response.choices[0].message.content
 
 
-def _general_chat_reply(user_message: str) -> str:
-    response = chat(
-        messages=[
-            {"role": "system", "content": _GENERAL_CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ]
+def _format_recipes_for_llm(recipes: list[Recipe]) -> str:
+    if not recipes:
+        return "검색 결과 없음."
+    lines = []
+    for r in recipes:
+        ingredients_preview = ", ".join(
+            line.strip() for line in r.ingredients_raw.split("\n")[:6] if line.strip()
+        )
+        lines.append(f"- {r.name} (재료: {ingredients_preview})")
+    return "\n".join(lines)
+
+
+def _general_chat_reply(
+    user_message: str, history: list[dict], searcher: RecipeSearcher
+) -> str:
+    """LLM passthrough for anything that isn't a specific recipe/price
+    request, optionally grounded in the recipe DB via a search tool (e.g.
+    "냉장고에 두부랑 계란 있는데 뭐 해먹지?"). `history` is Gradio's
+    OpenAI-style message list, passed straight through as prior turns so
+    follow-up questions ("그거 말고 다른 건?") have context.
+    """
+    messages = [{"role": "system", "content": _GENERAL_CHAT_SYSTEM_PROMPT}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+
+    response = chat(messages=messages, tools=_GENERAL_CHAT_TOOLS)
+    message = response.choices[0].message
+    tool_calls = message.tool_calls or []
+    if not tool_calls:
+        return message.content
+
+    call = tool_calls[0]
+    args = json.loads(call.function.arguments)
+    results = searcher.search(args.get("query", user_message), top_k=3)
+
+    messages.append(
+        {
+            "role": "assistant",
+            "content": message.content or "",
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    },
+                }
+            ],
+        }
     )
-    return response.choices[0].message.content
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": _format_recipes_for_llm(results),
+        }
+    )
+
+    follow_up = chat(messages=messages)
+    return follow_up.choices[0].message.content
 
 
 def handle_message(
@@ -83,17 +166,21 @@ def handle_message(
     searcher: RecipeSearcher,
     price_client: EnuriClient,
     conn: sqlite3.Connection,
+    history: list[dict] | None = None,
 ) -> str:
     """Route a user message and produce a final reply.
 
     Fixed pipeline for the recipe/price path (search -> price -> compose),
     per the earlier design decision to keep MVP orchestration deterministic
-    rather than a fully autonomous agent loop.
+    rather than a fully autonomous agent loop. `history` (Gradio's
+    OpenAI-style message list) is only threaded into the general-chat path;
+    the recipe/price path stays single-shot since each request names its own
+    dish.
     """
     result = route(user_message)
 
     if result.intent == "general_chat":
-        return _general_chat_reply(user_message)
+        return _general_chat_reply(user_message, history or [], searcher)
 
     recipes = searcher.search(result.menu_name, top_k=1)
     if not recipes:

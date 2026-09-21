@@ -57,7 +57,8 @@ class _FakeFunction:
 
 
 class _FakeToolCall:
-    def __init__(self, name: str, arguments: str):
+    def __init__(self, name: str, arguments: str, call_id: str = "call_fake"):
+        self.id = call_id
         self.function = _FakeFunction(name, arguments)
 
 
