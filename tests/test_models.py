@@ -47,3 +47,21 @@ def test_from_api_row_defaults_missing_fields_to_empty_string():
 
     assert recipe.ingredients_raw == ""
     assert recipe.steps == []
+
+
+def test_servings_parses_bracket_prefix():
+    recipe = Recipe(rcp_seq="1", name="삼겹살쌈", ingredients_raw="[ 2인분 ] 삼겹살(200g), 상추(50g)")
+
+    assert recipe.servings == 2
+
+
+def test_servings_parses_bracket_prefix_without_spaces():
+    recipe = Recipe(rcp_seq="1", name="부추찜", ingredients_raw="[1인분]조선부추 50g")
+
+    assert recipe.servings == 1
+
+
+def test_servings_is_none_when_not_stated():
+    recipe = Recipe(rcp_seq="1", name="김치찌개", ingredients_raw="김치 200g, 돼지고기 150g")
+
+    assert recipe.servings is None

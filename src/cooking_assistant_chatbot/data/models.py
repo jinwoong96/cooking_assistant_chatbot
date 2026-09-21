@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 _MANUAL_STEPS = 20
+_SERVINGS_RE = re.compile(r"^\[\s*(\d+)\s*인분\s*\]")
 
 
 class Recipe(BaseModel):
@@ -30,6 +33,20 @@ class Recipe(BaseModel):
     sodium_mg: str = ""
     steps: list[str] = Field(default_factory=list)
     step_image_urls: list[str] = Field(default_factory=list)
+
+    @property
+    def servings(self) -> int | None:
+        """Number of servings this recipe makes, when the source data says so.
+
+        Only ~3.5% of recipes in the dataset state this, as a "[N인분]"
+        prefix on `ingredients_raw` (e.g. "[ 2인분 ] 삼겹살(200g), ..."). No
+        other field in the source API reliably gives a serving count
+        (`INFO_WGT` is grams *per* serving, not how many servings there are,
+        and is itself empty most of the time). Returns None rather than
+        guessing when the source doesn't say.
+        """
+        match = _SERVINGS_RE.match(self.ingredients_raw.strip())
+        return int(match.group(1)) if match else None
 
     @classmethod
     def from_api_row(cls, row: dict[str, str]) -> "Recipe":

@@ -16,8 +16,9 @@ _GENERAL_CHAT_SYSTEM_PROMPT = "너는 친근한 요리 챗봇이다. 자연스�
 _COMPOSE_RECIPE_SYSTEM_PROMPT = (
     "너는 요리 정보를 요약해서 알려주는 챗봇이다. 이번 턴은 대화의 시작이 아니라, "
     "사용자가 이미 요청한 레시피에 대한 정보 응답이다. 반드시 아래 사용자 메시지에 주어진 "
-    "데이터만 사용해서 답변하고, 데이터에 없는 내용을 지어내지 마라. 사용자에게 재료를 "
-    "준비했는지 되묻거나 대화를 여는 질문을 하지 말고, 바로 메뉴명·재료 전체 구매 시 총 "
+    "데이터만 사용해서 답변하고, 데이터에 없는 내용을 지어내지 마라. 몇 인분인지가 주어지지 "
+    "않았다면 인분 수를 절대 추측하거나 언급하지 마라. 사용자에게 재료를 준비했는지 되묻거나 "
+    "대화를 여는 질문을 하지 말고, 바로 메뉴명·(주어졌다면) 인분 수·재료 전체 구매 시 총 "
     "비용·레시피 사용량 기준 예상 원가·조리 순서 요약을 담은 완결된 답변을 작성해라."
 )
 
@@ -41,11 +42,16 @@ def _compose_recipe_reply(recipe: Recipe, estimate: RecipePriceEstimate) -> str:
         if estimate.ingredients_missing_portioned_cost
         else ""
     )
+    servings_line = (
+        f"인분 수: {recipe.servings}인분\n" if recipe.servings is not None else ""
+    )
     prompt = (
         "아래 레시피와 예상 재료비 정보를 참고해서, 사용자에게 친근한 한국어로 답변을 "
-        "작성해줘. 메뉴명, 재료를 전부 새로 구매할 때의 총 비용, 레시피에 필요한 양만큼만 "
-        "썼을 때의 예상 원가(소분원가) 합계, 간단한 조리 순서 요약을 포함해줘.\n\n"
+        "작성해줘. 메뉴명, (주어졌다면) 인분 수, 재료를 전부 새로 구매할 때의 총 비용, "
+        "레시피에 필요한 양만큼만 썼을 때의 예상 원가(소분원가) 합계, 간단한 조리 순서 "
+        "요약을 포함해줘.\n\n"
         f"메뉴: {recipe.name}\n"
+        f"{servings_line}"
         f"재료별 가격:\n{ingredient_lines}\n"
         f"전체 재료 새로 구매 시 총 비용: {estimate.total_price}원\n"
         f"레시피 사용량 기준 예상 원가 합계: {estimate.total_portioned_cost}원{missing_note}\n"
