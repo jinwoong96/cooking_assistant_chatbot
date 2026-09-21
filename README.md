@@ -38,7 +38,12 @@ uv run python -m cooking_assistant_chatbot.data.crawl_supplemental_recipes
 
 ```bash
 uv run python -m cooking_assistant_chatbot.rag.build_index
+uv run python -m cooking_assistant_chatbot.data.build_ingredient_index
 ```
+
+두 번째 명령은 "냉장고에 있는 재료로 뭐 해먹지?" 같은 질문에 재료를 정확히
+매칭해서 검색하기 위한 색인입니다. 레시피 데이터가 바뀔 때마다 둘 다 다시
+실행하세요.
 
 ## 챗봇 실행
 

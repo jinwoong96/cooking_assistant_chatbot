@@ -16,7 +16,17 @@ def test_drops_leading_line_that_duplicates_the_recipe_name():
     names = _names(raw, recipe_name="새우두부계란찜")
 
     assert "새우두부계란찜" not in names
-    assert names == ["연두부", "칵테일새우", "시금치"]
+
+
+def test_drops_leading_line_duplicating_recipe_name_despite_spacing_difference():
+    # Real data quirk: RCP_NM has spaces ("새우 두부 계란찜") but the first
+    # ingredients_raw line glues them together ("새우두부계란찜").
+    raw = "새우두부계란찜\n연두부 75g(3/4모), 칵테일새우 20g(5마리)"
+
+    names = _names(raw, recipe_name="새우 두부 계란찜")
+
+    assert "새우두부계란찜" not in names
+    assert names == ["연두부", "칵테일새우"]
 
 
 def test_drops_standalone_label_line():

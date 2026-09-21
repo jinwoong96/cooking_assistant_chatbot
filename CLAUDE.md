@@ -16,11 +16,13 @@ name in one shot) -> RAG recipe search -> ingredient extraction/normalization
 에누리(enuri.com) -> a final LLM call
 composes the reply from that data. general_chat is now history-aware (takes
 Gradio's OpenAI-style message list as prior turns, so follow-ups like "그거
-말고 다른 건?" work) and RAG-grounded via a `search_recipes` tool it can call
-for ingredient-based/similar-menu questions ("냉장고에 두부랑 계란 있는데
-뭐 해먹지?") — falls back to the LLM's own knowledge (e.g. substitution
-questions) when it doesn't call the tool. The recipe/price path itself stays
-single-shot/stateless (each request names its own dish, so it doesn't need
+말고 다른 건?" work) and has two search tools it can call: `search_recipes_
+by_ingredients` (exact — see below) for "냉장고에 두부랑 계란 있는데 뭐
+해먹지?"-style questions, and `search_recipes_by_style` (the RAG/semantic
+search) for mood/style/similar-menu questions. Falls back to the LLM's own
+knowledge (e.g. substitution questions) when it doesn't call either tool.
+The recipe/price path itself stays single-shot/stateless (each request
+names its own dish, so it doesn't need
 history) — only general_chat got history threaded through.
 
 Stack decisions:
@@ -92,14 +94,42 @@ Stack decisions:
   vs. 에누리's 1s — 10s/ingredient makes an interactive chatbot response
   impractical (a 10-ingredient recipe would take 100+ seconds).
 
-Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
-relationship search (general_chat's RAG grounding now covers a good chunk of
-what this would have been for — a graph DB would mainly help substitution
-chains and structured "similar recipe" traversal beyond plain semantic
-search), multi-user auth. Larger-scale crawling beyond the one 145-recipe
-supplemental run above is also still deferred — if more is needed later,
-extend `DEFAULT_KEYWORDS` in `crawl_supplemental_recipes.py` rather than
-re-deriving the legal/scope reasoning from scratch.
+Deferred to later phases (not in MVP): a real graph DB (Neo4j etc.) for
+ingredient/recipe relationships, multi-user auth. Larger-scale crawling
+beyond the one 145-recipe supplemental run above is also still deferred —
+if more is needed later, extend `DEFAULT_KEYWORDS` in
+`crawl_supplemental_recipes.py` rather than re-deriving the legal/scope
+reasoning from scratch.
+
+**Resolved (without a graph DB)**: multi-ingredient exact-match recipe
+search. Asked "would a graph help accuracy here?" and worked through what a
+graph would actually buy over what existed: substitution advice wouldn't
+improve (our data has no curated substitution edges, so it'd just be the
+LLM's own knowledge either way — same as now); "similar recipe" search
+wouldn't meaningfully improve (RAG/embedding search already handles that
+reasonably). The one real gap: "what can I cook with exactly X and Y"
+was answered by fuzzy semantic search before, which can't guarantee a
+recipe actually contains both ingredients. Fixed with a plain SQLite
+junction table instead of standing up a graph database —
+`data/ingredient_index.py` (`recipe_ingredients` table: recipe_rcp_seq,
+ingredient_name, built from the already-parsed ingredient names) +
+`find_recipes_by_ingredients()` (set-intersection across per-ingredient
+substring matches, ranked by fewest total ingredients). Rebuild after any
+data change with `python -m cooking_assistant_chatbot.data.build_ingredient_index`
+(not automatic — same pattern as the RAG index build). Wired into
+general_chat as the `search_recipes_by_ingredients` tool, alongside the
+existing RAG search (now named `search_recipes_by_style`) for mood/style
+questions.
+
+Also found and fixed a real ingredient_parser bug while building this: the
+duplicate-recipe-name-as-first-line check compared strings exactly, so a
+name like "새우 두부 계란찜" (spaced) vs. the ingredients_raw first line
+"새우두부계란찜" (glued, no spaces — a real data inconsistency) wouldn't
+match, letting the glued name slip in as a bogus "ingredient" that could
+spuriously match unrelated searches (e.g. it contains both "두부" and
+"계란" as substrings). Fixed by comparing with whitespace stripped
+(`_normalize_spacing`). Affected 3/1301 recipes — rebuild the ingredient
+index after pulling this fix.
 
 **Resolved**: LLM-based correction for ambiguous ingredient names.
 `ingredient_parser.py` itself got two real bug fixes first (found by scanning

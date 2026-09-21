@@ -91,7 +91,7 @@ def test_general_chat_includes_prior_history_as_messages(tmp_path, monkeypatch):
     assert history[1] in captured["messages"]
 
 
-def test_general_chat_uses_search_tool_and_grounds_final_reply(tmp_path, monkeypatch):
+def test_general_chat_uses_style_search_tool_and_grounds_final_reply(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "route", lambda msg: RouteResult(intent="general_chat"))
     recipe = _recipe()
     calls = []
@@ -99,14 +99,14 @@ def test_general_chat_uses_search_tool_and_grounds_final_reply(tmp_path, monkeyp
     def fake_chat(**kwargs):
         calls.append(kwargs)
         if len(calls) == 1:
-            return fake_tool_call_response("search_recipes", {"query": "두부 계란"})
+            return fake_tool_call_response("search_recipes_by_style", {"query": "매콤한 국물요리"})
         return fake_text_response(f"{recipe.name} 어때요?")
 
     monkeypatch.setattr(pipeline, "chat", fake_chat)
     conn = get_connection(str(tmp_path / "test.db"))
 
     reply = pipeline.handle_message(
-        "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
+        "매콤한 국물요리 추천해줘",
         _StubSearcher([recipe]),
         _StubPriceClient(),
         conn,
@@ -117,3 +117,37 @@ def test_general_chat_uses_search_tool_and_grounds_final_reply(tmp_path, monkeyp
     tool_messages = [m for m in calls[1]["messages"] if m.get("role") == "tool"]
     assert len(tool_messages) == 1
     assert recipe.name in tool_messages[0]["content"]
+
+
+def test_general_chat_uses_ingredients_search_tool_for_exact_match(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "route", lambda msg: RouteResult(intent="general_chat"))
+    conn = get_connection(str(tmp_path / "test.db"))
+    from cooking_assistant_chatbot.data.db import upsert_recipes
+    from cooking_assistant_chatbot.data.ingredient_index import build_ingredient_index
+
+    exact_match = Recipe(rcp_seq="10", name="두부계란찜", ingredients_raw="두부 100g, 계란 2개")
+    upsert_recipes(conn, [exact_match])
+    build_ingredient_index(conn)
+
+    calls = []
+
+    def fake_chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return fake_tool_call_response(
+                "search_recipes_by_ingredients", {"ingredients": ["두부", "계란"]}
+            )
+        return fake_text_response("두부계란찜 어때요?")
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+
+    reply = pipeline.handle_message(
+        "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
+        _StubSearcher([]),  # semantic search deliberately returns nothing
+        _StubPriceClient(),
+        conn,
+    )
+
+    assert reply == "두부계란찜 어때요?"
+    tool_messages = [m for m in calls[1]["messages"] if m.get("role") == "tool"]
+    assert "두부계란찜" in tool_messages[0]["content"]

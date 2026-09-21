@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from ..data.ingredient_index import find_recipes_by_ingredients
 from ..data.models import Recipe
 from ..llm.client import chat
 from ..pricing.enuri_client import EnuriClient
@@ -14,34 +15,57 @@ from .router import RouteResult, route
 __all__ = ["handle_message", "RouteResult"]
 
 _GENERAL_CHAT_SYSTEM_PROMPT = (
-    "너는 친근한 요리 챗봇이다. 자연스러운 한국어로 대답해라. 사용자가 냉장고에 있는 "
-    "재료로 뭘 해먹을지 묻거나, 비슷한 메뉴를 추천해달라고 하거나, 실제 레시피 데이터를 "
-    "찾아보면 더 정확히 답할 수 있는 질문을 하면 search_recipes 도구로 레시피 DB를 검색해서 "
-    "그 결과를 바탕으로 답해라. 재료 대체처럼 일반 상식으로 충분한 질문은 도구 없이 바로 "
-    "답해도 된다. 이전 대화 맥락을 참고해서 자연스럽게 이어서 대답해라."
+    "너는 친근한 요리 챗봇이다. 자연스러운 한국어로 대답해라. 두 가지 검색 도구가 있다: "
+    "search_recipes_by_ingredients는 사용자가 가진 재료를 '전부' 포함하는 레시피를 정확히 "
+    "찾아준다 (예: '냉장고에 두부랑 계란 있는데 뭐 해먹지'처럼 구체적인 재료 목록이 있을 때). "
+    "search_recipes_by_style은 재료가 아니라 분위기·맛·메뉴 종류로 의미 기반 검색한다 "
+    "(예: '매콤한 국물요리 추천해줘', '이거랑 비슷한 메뉴 있어?'). 상황에 맞는 도구를 골라 "
+    "쓰고, 재료 대체처럼 일반 상식으로 충분한 질문은 도구 없이 바로 답해도 된다. 이전 대화 "
+    "맥락을 참고해서 자연스럽게 이어서 대답해라."
 )
 
 _GENERAL_CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_recipes",
+            "name": "search_recipes_by_ingredients",
             "description": (
-                "가지고 있는 재료나 원하는 스타일로 레시피 DB를 검색한다. "
-                "'냉장고에 있는 재료로 뭐 해먹지', '비슷한 메뉴 추천' 같은 질문에 사용."
+                "사용자가 가진 재료를 전부 포함하는 레시피를 정확히 검색한다 "
+                "(재료명 기반 정확 매칭). '냉장고에 있는 재료로 뭐 해먹지' 같은 질문에 사용."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ingredients": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "가진 재료 목록 (예: ['두부', '계란'])",
+                    }
+                },
+                "required": ["ingredients"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_recipes_by_style",
+            "description": (
+                "재료가 아니라 맛·분위기·메뉴 종류 등으로 레시피를 의미 기반 검색한다. "
+                "'비슷한 메뉴 추천해줘', '매콤한 국물요리 뭐 있어' 같은 질문에 사용."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "검색어 (예: '두부 계란', '매콤한 국물요리')",
+                        "description": "검색어 (예: '매콤한 국물요리', '든든한 자취요리')",
                     }
                 },
                 "required": ["query"],
             },
         },
-    }
+    },
 ]
 
 _COMPOSE_RECIPE_SYSTEM_PROMPT = (
@@ -110,14 +134,27 @@ def _format_recipes_for_llm(recipes: list[Recipe]) -> str:
     return "\n".join(lines)
 
 
+def _run_general_chat_tool(
+    call, searcher: RecipeSearcher, conn: sqlite3.Connection
+) -> list[Recipe]:
+    args = json.loads(call.function.arguments)
+    if call.function.name == "search_recipes_by_ingredients":
+        return find_recipes_by_ingredients(conn, args.get("ingredients") or [], limit=3)
+    return searcher.search(args.get("query", ""), top_k=3)
+
+
 def _general_chat_reply(
-    user_message: str, history: list[dict], searcher: RecipeSearcher
+    user_message: str,
+    history: list[dict],
+    searcher: RecipeSearcher,
+    conn: sqlite3.Connection,
 ) -> str:
     """LLM passthrough for anything that isn't a specific recipe/price
-    request, optionally grounded in the recipe DB via a search tool (e.g.
-    "냉장고에 두부랑 계란 있는데 뭐 해먹지?"). `history` is Gradio's
-    OpenAI-style message list, passed straight through as prior turns so
-    follow-up questions ("그거 말고 다른 건?") have context.
+    request, optionally grounded in the recipe DB via search tools (exact
+    ingredient match, or semantic style/similarity search — see
+    _GENERAL_CHAT_TOOLS). `history` is Gradio's OpenAI-style message list,
+    passed straight through as prior turns so follow-up questions ("그거
+    말고 다른 건?") have context.
     """
     messages = [{"role": "system", "content": _GENERAL_CHAT_SYSTEM_PROMPT}]
     messages.extend(history)
@@ -130,8 +167,7 @@ def _general_chat_reply(
         return message.content
 
     call = tool_calls[0]
-    args = json.loads(call.function.arguments)
-    results = searcher.search(args.get("query", user_message), top_k=3)
+    results = _run_general_chat_tool(call, searcher, conn)
 
     messages.append(
         {
@@ -180,7 +216,7 @@ def handle_message(
     result = route(user_message)
 
     if result.intent == "general_chat":
-        return _general_chat_reply(user_message, history or [], searcher)
+        return _general_chat_reply(user_message, history or [], searcher, conn)
 
     recipes = searcher.search(result.menu_name, top_k=1)
     if not recipes:
