@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 
 from chromadb.api.types import Documents, EmbeddingFunction
 
@@ -34,9 +35,15 @@ class FakeEmbeddingFunction(EmbeddingFunction[Documents]):
 
     @staticmethod
     def _embed_one(text: str) -> list[float]:
+        # zlib.crc32, not hash(): Python randomizes str hash() per-process
+        # (PYTHONHASHSEED), which made this "deterministic" fake flaky
+        # across separate test runs. Plain ord() % _DIM is stable but collides
+        # badly across Korean's contiguous syllable block (every char exactly
+        # _DIM codepoints apart lands in the same bucket); crc32 gives a
+        # stable *and* well-distributed bucket instead.
         vector = [0.0] * _DIM
         for char in text:
-            vector[hash(char) % _DIM] += 1.0
+            vector[zlib.crc32(char.encode("utf-8")) % _DIM] += 1.0
         norm = sum(v * v for v in vector) ** 0.5
         if norm == 0:
             return vector
