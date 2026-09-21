@@ -67,7 +67,17 @@ Stack decisions:
   price scraper), which conveniently gives already-clean ingredient strings
   (e.g. "떡 2컵") instead of COOKRCP01's messy free-text blob.
 - Deployment: localhost only for now; if remote access is needed later, add
-  Tailscale + Gradio `auth=` rather than redesigning anything
+  Tailscale (not done) + Gradio `auth=` (done — see below) rather than
+  redesigning anything
+- Auth: single-user password gate, not real multi-user support (this is a
+  personal single-user tool by design — a "multi-user" deferred item never
+  actually fit the product). `app.resolve_auth()` returns `None` (no login
+  prompt) unless `APP_PASSWORD` is set in `.env`, in which case Gradio's
+  built-in `auth=(username, password)` gates the whole app behind its own
+  login form. Verified for real with curl: wrong password -> 400 "Incorrect
+  credentials", right password -> 200 + session cookie set. Leave
+  `APP_PASSWORD` unset for local-only use; set it before exposing the app
+  beyond localhost (e.g. once Tailscale is added).
 - Ingredient price lookup: scrapes **에누리(enuri.com)** search results
   (`EnuriClient`, `pricing/enuri_client.py`), reading the page's
   `<script type="application/ld+json">` schema.org block (stable, semantic —
@@ -95,8 +105,12 @@ Stack decisions:
   impractical (a 10-ingredient recipe would take 100+ seconds).
 
 Deferred to later phases (not in MVP): a real graph DB (Neo4j etc.) for
-ingredient/recipe relationships, multi-user auth. Larger-scale crawling
-beyond the one 145-recipe supplemental run above is also still deferred —
+ingredient/recipe relationships. Real multi-user support (per-user accounts/
+data isolation) was considered and deliberately dropped rather than
+deferred — this is a personal single-user tool by design, so it never
+actually fit; see the Auth bullet above for the lightweight single-password
+gate that was built instead. Larger-scale crawling beyond the one
+145-recipe supplemental run above is also still deferred —
 if more is needed later, extend `DEFAULT_KEYWORDS` in
 `crawl_supplemental_recipes.py` rather than re-deriving the legal/scope
 reasoning from scratch.

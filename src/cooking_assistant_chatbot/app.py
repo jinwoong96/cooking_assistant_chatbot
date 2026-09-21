@@ -32,9 +32,17 @@ def build_app() -> gr.ChatInterface:
     )
 
 
+def resolve_auth() -> tuple[str, str] | None:
+    """None (no login prompt) unless a password is configured — see
+    config.Settings.app_password."""
+    if not settings.app_password:
+        return None
+    return (settings.app_username, settings.app_password)
+
+
 def main() -> None:
     app = build_app()
-    app.launch()
+    app.launch(auth=resolve_auth())
 
 
 if __name__ == "__main__":
