@@ -24,6 +24,16 @@ uv run python -m cooking_assistant_chatbot.data.ingest
 
 `data/app.db` (SQLite)에 레시피가 적재됩니다.
 
+## 레시피 데이터 보완 (선택)
+
+식약처 데이터가 저염식/건강식 위주라, 자취생 일상 메뉴(떡볶이·라면·카레 등)를
+[만개의레시피](https://www.10000recipe.com)에서 소량 보완 수집합니다 (개인 비상업 용도,
+robots.txt 준수, 초당 1회로 자체 제한 — 자세한 내용은 `CLAUDE.md` 참고).
+
+```bash
+uv run python -m cooking_assistant_chatbot.data.crawl_supplemental_recipes
+```
+
 ## 레시피 검색 인덱스 빌드
 
 ```bash

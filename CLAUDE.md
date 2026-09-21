@@ -11,8 +11,9 @@ Core flow (implemented in `agent/router.py` + `agent/pipeline.py`): user
 message -> intent router (single LLM tool-call that both classifies
 recipe-request vs. general-chat *and*, for recipe requests, extracts the menu
 name in one shot) -> RAG recipe search -> ingredient extraction/normalization
-(rule-based, with LLM fallback for ambiguous cases still deferred) ->
-lookup of ingredient prices by scraping 에누리(enuri.com) -> a final LLM call
+(rule-based first, LLM correction for names it leaves ambiguous — see
+`agent/ingredient_correction.py`) -> lookup of ingredient prices by scraping
+에누리(enuri.com) -> a final LLM call
 composes the reply from that data. general_chat is a real (if simple) LLM
 passthrough already, not a stub — only *specialized* general-conversation
 handling (e.g. substitution advice grounded in the recipe DB) is deferred.
@@ -43,10 +44,21 @@ Stack decisions:
   up elsewhere, apply the same fix rather than re-diagnosing from scratch.
 - Vector store: Chroma, embeddings: BGE-M3
 - Structured data: SQLite
-- Recipe data: public datasets first (식약처 COOKRCP01, 농식품 공공데이터 레시피 API),
-  supplemented only by small-scale, personal-use crawling if needed (사이트
-  약관/robots.txt 확인 후 소량만; see prior research on legal risk before adding
-  any crawler)
+- Recipe data: 식약처 COOKRCP01 (1156 recipes) as the base, **supplemented by
+  a one-time crawl of 만개의레시피(10000recipe.com)** — 145 recipes across 15
+  자취생/casual-dish keywords (떡볶이, 라면, 카레, 파스타, 볶음밥, 김밥,
+  오므라이스, 돈까스, 짜장밥, 짬뽕, 토스트, 계란찜, 우동, 덮밥, 마라탕),
+  chosen because COOKRCP01 skews toward health/저염식 recipes. 1301 total.
+  robots.txt/ToS checked again before running (policies can change — the
+  Naver Shopping API died between sessions in this same project); personal,
+  non-commercial, not redistributed, self-throttled to 1 req/sec even though
+  robots.txt here doesn't specify a Crawl-delay. See
+  `data/tenthousand_recipe_crawler.py` / `data/crawl_supplemental_recipes.py`
+  to re-run or extend with more keywords — it upserts by a namespaced
+  `10000recipe_<id>` key, so re-running is safe (no duplicates). Reads the
+  page's schema.org `Recipe` JSON-LD block (same technique as the enuri
+  price scraper), which conveniently gives already-clean ingredient strings
+  (e.g. "떡 2컵") instead of COOKRCP01's messy free-text blob.
 - Deployment: localhost only for now; if remote access is needed later, add
   Tailscale + Gradio `auth=` rather than redesigning anything
 - Ingredient price lookup: scrapes **에누리(enuri.com)** search results
@@ -77,7 +89,10 @@ Stack decisions:
 
 Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
 relationship search, general free-form cooking conversation (router exists,
-handler logic doesn't yet), larger-scale crawling, multi-user auth.
+handler logic doesn't yet), multi-user auth. Larger-scale crawling beyond
+the one 145-recipe supplemental run above is also still deferred — if more
+is needed later, extend `DEFAULT_KEYWORDS` in `crawl_supplemental_recipes.py`
+rather than re-deriving the legal/scope reasoning from scratch.
 
 **Resolved**: LLM-based correction for ambiguous ingredient names.
 `ingredient_parser.py` itself got two real bug fixes first (found by scanning
