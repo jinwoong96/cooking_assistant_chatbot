@@ -14,9 +14,14 @@ name in one shot) -> RAG recipe search -> ingredient extraction/normalization
 (rule-based first, LLM correction for names it leaves ambiguous — see
 `agent/ingredient_correction.py`) -> lookup of ingredient prices by scraping
 에누리(enuri.com) -> a final LLM call
-composes the reply from that data. general_chat is a real (if simple) LLM
-passthrough already, not a stub — only *specialized* general-conversation
-handling (e.g. substitution advice grounded in the recipe DB) is deferred.
+composes the reply from that data. general_chat is now history-aware (takes
+Gradio's OpenAI-style message list as prior turns, so follow-ups like "그거
+말고 다른 건?" work) and RAG-grounded via a `search_recipes` tool it can call
+for ingredient-based/similar-menu questions ("냉장고에 두부랑 계란 있는데
+뭐 해먹지?") — falls back to the LLM's own knowledge (e.g. substitution
+questions) when it doesn't call the tool. The recipe/price path itself stays
+single-shot/stateless (each request names its own dish, so it doesn't need
+history) — only general_chat got history threaded through.
 
 Stack decisions:
 - Backend: Python (FastAPI)
@@ -88,11 +93,13 @@ Stack decisions:
   impractical (a 10-ingredient recipe would take 100+ seconds).
 
 Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
-relationship search, general free-form cooking conversation (router exists,
-handler logic doesn't yet), multi-user auth. Larger-scale crawling beyond
-the one 145-recipe supplemental run above is also still deferred — if more
-is needed later, extend `DEFAULT_KEYWORDS` in `crawl_supplemental_recipes.py`
-rather than re-deriving the legal/scope reasoning from scratch.
+relationship search (general_chat's RAG grounding now covers a good chunk of
+what this would have been for — a graph DB would mainly help substitution
+chains and structured "similar recipe" traversal beyond plain semantic
+search), multi-user auth. Larger-scale crawling beyond the one 145-recipe
+supplemental run above is also still deferred — if more is needed later,
+extend `DEFAULT_KEYWORDS` in `crawl_supplemental_recipes.py` rather than
+re-deriving the legal/scope reasoning from scratch.
 
 **Resolved**: LLM-based correction for ambiguous ingredient names.
 `ingredient_parser.py` itself got two real bug fixes first (found by scanning

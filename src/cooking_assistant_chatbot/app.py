@@ -22,7 +22,7 @@ def build_app() -> gr.ChatInterface:
     price_client = EnuriClient()
 
     def respond(message: str, history: list) -> str:
-        return handle_message(message, searcher, price_client, conn)
+        return handle_message(message, searcher, price_client, conn, history=history)
 
     return gr.ChatInterface(
         fn=respond,
