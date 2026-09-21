@@ -67,3 +67,48 @@ def test_estimate_recipe_price_uses_cache_on_second_call(tmp_path):
     estimate_recipe_price(recipe, client, conn)
 
     assert client.call_count == 1
+
+
+class _StubClientWithSizedProducts:
+    """Stub whose product titles carry a real package size, for portioned-cost tests."""
+
+    def __init__(self, data: dict[str, tuple[int, str]]):
+        self._data = data
+
+    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+        if query not in self._data:
+            return []
+        price, title = self._data[query]
+        return [ShoppingItem(title=title, price=price, brand="테스트몰", link="")]
+
+
+def test_estimate_recipe_price_computes_portioned_cost_when_units_match(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="다진마늘(10g)")
+    client = _StubClientWithSizedProducts({"다진마늘": (2000, "청정원 다진마늘 500g")})
+
+    estimate = estimate_recipe_price(recipe, client, _conn(tmp_path))
+
+    assert estimate.ingredient_prices[0].portioned_cost == 40  # 2000 * (10/500)
+    assert estimate.total_portioned_cost == 40
+    assert estimate.ingredients_missing_portioned_cost == []
+
+
+def test_estimate_recipe_price_leaves_portioned_cost_none_when_product_has_no_size(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="청양고추(3g)")
+    client = _StubClientWithSizedProducts(
+        {"청양고추": (980, "이마트 소소한 하루 청양고추")}
+    )
+
+    estimate = estimate_recipe_price(recipe, client, _conn(tmp_path))
+
+    assert estimate.ingredient_prices[0].portioned_cost is None
+    assert estimate.ingredients_missing_portioned_cost == ["청양고추"]
+
+
+def test_estimate_recipe_price_leaves_portioned_cost_none_when_units_mismatch(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="테스트", ingredients_raw="참기름(20g)")
+    client = _StubClientWithSizedProducts({"참기름": (4800, "오뚜기 옛날 참기름 320ml")})
+
+    estimate = estimate_recipe_price(recipe, client, _conn(tmp_path))
+
+    assert estimate.ingredient_prices[0].portioned_cost is None
