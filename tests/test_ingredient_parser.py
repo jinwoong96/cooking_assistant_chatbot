@@ -72,3 +72,21 @@ def test_strips_leading_serving_size_bracket():
 
 def test_empty_input_returns_empty_list():
     assert parse_ingredients("") == []
+
+
+def test_strips_black_circle_bullet_with_colon_label():
+    raw = "●멸치육수 : 국물용 멸치, 다시마"
+
+    assert _names(raw) == ["국물용 멸치", "다시마"]
+
+
+def test_strips_bullet_dot_with_colon_label():
+    raw = "•필수 재료 : 주꾸미, 청양고추"
+
+    assert _names(raw) == ["주꾸미", "청양고추"]
+
+
+def test_strips_multi_word_colon_label():
+    raw = "치커리 샐러드 : 치커리\n올리브마늘 드레싱 : 올리브유"
+
+    assert _names(raw) == ["치커리", "올리브유"]

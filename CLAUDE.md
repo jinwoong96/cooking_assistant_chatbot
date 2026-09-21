@@ -77,9 +77,60 @@ Stack decisions:
 
 Deferred to later phases (not in MVP): graph-DB-based ingredient/recipe
 relationship search, general free-form cooking conversation (router exists,
-handler logic doesn't yet), larger-scale crawling, multi-user auth, LLM-based
-correction pass for ambiguous ingredient names (current parser is rule-based
-only; see `pricing/ingredient_parser.py` docstring for known edge cases).
+handler logic doesn't yet), larger-scale crawling, multi-user auth.
+
+**Resolved**: LLM-based correction for ambiguous ingredient names.
+`ingredient_parser.py` itself got two real bug fixes first (found by scanning
+the DB for 3+-word parsed names, most of which turned out fixable with
+plain rules): `●`/`•` bullet markers weren't in the label-strip charset, and
+the colon-label regex didn't allow spaces in the label (so "치커리 샐러드 :
+치커리" wasn't recognized as a label). That dropped 3+-word names from 309 to
+130 across the dataset.
+
+For what's left, checking live search results showed the "empty results ⇒
+ambiguous" assumption was wrong: several bad names (e.g. "고기 삶는 재료
+양파", "톳 무침양념 설탕") return a *confidently wrong* product instead of
+nothing — so correction can't be a fallback that only fires on empty
+results. Design: `pricing/price_lookup._looks_ambiguous()` flags any parsed
+name with 3+ words and runs it through `agent/ingredient_correction.
+correct_ingredient_name()` (an LLM tool-call) *before* searching; a plain
+empty-result fallback also still triggers correction for shorter names that
+slip through. The correction tool can also report "this isn't a real
+purchasable ingredient" (verified against "간 맞출 때", a cooking
+instruction the parser had mistakenly captured as an ingredient — correctly
+returned `None` rather than searching for it). `correct_name` is injected
+into `estimate_recipe_price()` as a callback rather than importing the LLM
+client directly, so `pricing/` stays LLM-free and unit-testable without
+mocking chat.
+
+**Model reliability note**: qwen3:14b needed `temperature=0.0` for this
+(higher values gave inconsistent results run-to-run on the *identical*
+input, including once wrongly flagging "설탕"/sugar as not-purchasable at
+temperature 0.2 — that specific error disappeared at 0.0). Even at
+temperature 0, tested against 9 real ambiguous names from the DB, it
+correctly cleaned ~5/9 and left ~4/9 unchanged rather than inventing a wrong
+correction. Treated as an acceptable ceiling rather than something to keep
+prompt-tuning — see `ingredient_correction.correct_ingredient_name`'s
+docstring. Don't re-attempt few-shot/prompt iteration expecting much more
+from this model size; a bigger model or a different technique would be the
+next lever, not more prompt tweaking.
+
+Also confirmed the result is context-sensitive, not just per-input
+deterministic: 묵은지가지말이's "고기 삶는 재료 양파" returned "양파"
+against a short hand-written test context, but unchanged against that
+recipe's real (longer) `ingredients_raw` as context, at temperature=0 both
+times. Ran end-to-end through `estimate_recipe_price()` on the real recipe:
+the unchanged name matched a bay-leaf product ("...고기삶을때..." in its
+listing text coincidentally matched), a confidently-wrong price rather than
+no price. Not a new regression — naive keyword search already had this
+failure mode before this feature existed (e.g. "물" matching bottled water);
+this feature only ever reduces how often it happens, never increases it.
+
+Known gap: corrections aren't cached — only successful price lookups are
+(under the *original* ambiguous name, so a cache hit does skip re-correcting
+on repeat). A recipe with several ambiguous names not yet in cache means
+several extra LLM calls on top of the existing per-recipe latency. Not fixed
+now; revisit if this becomes the dominant cost once used day to day.
 
 **Servings count**: `Recipe.servings` (a computed property in `data/models.py`,
 not a stored column) parses a leading "[N인분]" marker from `ingredients_raw`

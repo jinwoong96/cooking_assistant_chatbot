@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Callable
 
 from pydantic import BaseModel
 
@@ -9,6 +10,15 @@ from .cache import get_cached_price, set_cached_price
 from .enuri_client import EnuriClient, ShoppingItem
 from .ingredient_parser import parse_ingredients
 from .unit_parser import parse_quantity
+
+CorrectName = Callable[[str, str], "str | None"]
+
+_AMBIGUOUS_WORD_COUNT = 3
+"""A parsed ingredient name with this many words or more is treated as
+ambiguous (likely still has leftover descriptive text like "얇게 썬", "고기
+삶는 재료") and is sent through `correct_name` before searching, rather than
+only as a fallback after a failed search — plain search failures aren't the
+only symptom; a bad name can also return a confidently wrong product."""
 
 
 class IngredientPrice(BaseModel):
@@ -66,14 +76,58 @@ def _compute_portioned_cost(recipe_quantity_text: str, item: ShoppingItem) -> in
     return round(item.price * (recipe_qty.value / package_qty.value))
 
 
+def _looks_ambiguous(name: str) -> bool:
+    return len(name.split()) >= _AMBIGUOUS_WORD_COUNT
+
+
+def _search_with_correction(
+    client: EnuriClient,
+    name: str,
+    ingredients_context: str,
+    correct_name: CorrectName | None,
+) -> list[ShoppingItem]:
+    """Search for `name`, optionally cleaning it up via `correct_name` first
+    (when it looks ambiguous) or as a fallback (when the plain search finds
+    nothing). Returns [] if `correct_name` decides this isn't a real
+    purchasable ingredient at all."""
+    already_corrected = False
+    search_name = name
+
+    if correct_name is not None and _looks_ambiguous(name):
+        corrected = correct_name(name, ingredients_context)
+        if corrected is None:
+            return []
+        search_name = corrected
+        already_corrected = True
+
+    items = client.search_cheapest(search_name, limit=1)
+
+    if not items and not already_corrected and correct_name is not None:
+        corrected = correct_name(name, ingredients_context)
+        if corrected is None:
+            return []
+        items = client.search_cheapest(corrected, limit=1)
+
+    return items
+
+
 def estimate_recipe_price(
-    recipe: Recipe, client: EnuriClient, conn: sqlite3.Connection
+    recipe: Recipe,
+    client: EnuriClient,
+    conn: sqlite3.Connection,
+    correct_name: CorrectName | None = None,
 ) -> RecipePriceEstimate:
     """Parse a recipe's ingredients and look up the cheapest matching product for each.
 
     Prices are cached in SQLite (see `pricing.cache`) so repeated lookups of
     the same ingredient don't re-scrape enuri.com — both for latency and to
     keep request volume low (see CLAUDE.md's crawling notes).
+
+    `correct_name`, if given, is an LLM-backed callback (see
+    `agent.ingredient_correction.correct_ingredient_name`) used to clean up
+    ambiguous ingredient names before/after searching. Kept as an injected
+    callback rather than importing the LLM client directly so this module
+    stays pure/LLM-free and easy to test.
 
     This is the plain function that a future tool-calling layer would expose
     to the LLM agent; wiring that up is a separate, later feature.
@@ -84,7 +138,9 @@ def estimate_recipe_price(
     for ingredient in parsed:
         cheapest = get_cached_price(conn, ingredient.name)
         if cheapest is None:
-            items = client.search_cheapest(ingredient.name, limit=1)
+            items = _search_with_correction(
+                client, ingredient.name, recipe.ingredients_raw, correct_name
+            )
             cheapest = items[0] if items else None
             if cheapest is not None:
                 set_cached_price(conn, ingredient.name, cheapest)
