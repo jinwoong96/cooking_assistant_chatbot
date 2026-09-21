@@ -41,6 +41,15 @@ def _clean_name(name: str) -> str:
     return name.strip().rstrip(_TRAILING_CHARS).strip()
 
 
+def _normalize_spacing(text: str) -> str:
+    """Strip all whitespace for comparison — the source data sometimes
+    repeats the recipe name as the first ingredients_raw line with different
+    spacing (e.g. name "새우 두부 계란찜" vs. first line "새우두부계란찜"),
+    which would otherwise dodge the duplicate-name-line check below and let
+    the glued-together dish name slip in as a bogus "ingredient"."""
+    return text.strip().replace(" ", "")
+
+
 def _split_name_and_quantity(token: str) -> tuple[str, str]:
     match = _DIGIT_RE.search(token)
     if match:
@@ -89,7 +98,7 @@ def parse_ingredients(ingredients_raw: str, recipe_name: str = "") -> list[Parse
     text = _LEADING_LABEL_RE.sub("", text)
 
     lines = text.split("\n")
-    if lines and recipe_name and lines[0].strip() == recipe_name.strip():
+    if lines and recipe_name and _normalize_spacing(lines[0]) == _normalize_spacing(recipe_name):
         lines = lines[1:]
 
     results: list[ParsedIngredient] = []
