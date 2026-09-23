@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     embedding_model_name: str = "BAAI/bge-m3"
     llm_model: str = "ollama_chat/qwen3:14b"
     ollama_base_url: str = "http://localhost:11434"
+    stt_model: str = "medium"
+    """Round-trip test (TTS-generated Korean → VAD → STT) on this PC: small
+    1.1s but misheard "마라탕", large-v3-turbo 4.5s but dropped "찌개" from
+    "김치찌개", medium 3.1s and got all three right. Selectable in the UI."""
+    stt_model_dir: str = "data/models/whisper"
+    """faster-whisper download_root. Point it at an existing download (e.g.
+    the speech_to_text project's models/hf) to skip re-downloading."""
+    tts_model: str = "supertonic-2"
+    tts_voice: str = "F1"
     app_username: str = "me"
     app_password: str = ""
     """Empty (default) = no login prompt, for local-only use. Set both this

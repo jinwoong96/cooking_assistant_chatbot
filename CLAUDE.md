@@ -234,6 +234,66 @@ price lookups would violate the crawl-delay's intent even across multiple
 client instances, so the fix, if pursued, should be UI-side (streaming/
 progress indication) rather than trying to go faster.
 
+## Voice I/O (`voice/`)
+
+Both STT and TTS run locally on CPU. Open verification items for the user
+live in `TODO.md`.
+
+- **STT**: faster-whisper, CPU int8 (`voice/stt.py`). Ported from the user's
+  `C:\Project_Files\speech_to_text` project, which already measured this PC
+  (small 1.1s / medium 2.8s / large-v3-turbo 4.3s from end of speech to
+  text). No usable AMD GPU path: CTranslate2's Windows ROCm builds crash on
+  RDNA4, and whisper.cpp's Vulkan route needs a fragile source build on
+  Windows. Default `medium`: a round-trip test (Supertonic-generated Korean →
+  VAD → STT) had small mishear "마라탕" and turbo drop "찌개" from
+  "김치찌개", while medium got all three right. That's synthetic speech, so
+  the pick still needs confirming with a real voice.
+- **VAD** (`voice/vad.py`): the reference project's energy-based segmenter,
+  rewritten push-style so the browser stream and the PC mic both use it.
+  Tuned constants were copied from the reference project's settings.json.
+- **Mic sources**, selectable in the UI: browser (`gr.Audio(streaming=True)`,
+  so it keeps working once the app is reached remotely via Tailscale) or PC
+  mic (`voice/pc_mic.py`, sounddevice + device picker).
+- **`VoiceController`** (`voice/controller.py`) is one shared instance per
+  app, not per session. That's fine because this is a single-user app and
+  the PC mic is a single device.
+  - Recognized text goes into an inbox, and a 0.5s `gr.Timer` pops it and
+    runs a chat turn.
+  - It's half-duplex: mic input is dropped while a turn is processing and
+    until the spoken reply should have finished. That duration comes from
+    the TTS audio length plus a 0.8s margin. Without this, the speakers feed
+    the mic and the bot answers itself.
+- **TTS**: Supertonic (`voice/tts.py`), ONNX and CPU-only. It was chosen
+  because qwen3:14b already occupies ~9.6GB of the 16GB VRAM.
+  - Speed here: a 13s sentence synthesizes in ~0.6s on supertonic-2 and ~2s
+    on supertonic-3. Default is supertonic-2 / voice F1, pending the user's
+    listening check.
+  - Rejected candidates: Kokoro and Piper have no Korean voice; Zonos is
+    Linux/NVIDIA-only; Qwen3-TTS, CosyVoice3, Chatterbox and S1-mini are
+    CUDA-oriented.
+  - MeloTTS (Korean, MIT) is the fallback if Supertonic's quality isn't good
+    enough, with the caveat that its mecab dependencies often conflict on
+    Windows.
+- **What gets spoken**: `handle_message()` returns a `Reply(text, speech)`.
+  - Recipe replies speak a fixed template (`recipe_speech_summary`: menu,
+    servings, both costs, step count). The user asked for a summary, not the
+    full price list, and a template adds no LLM latency.
+  - General-chat replies speak the full text with markdown and emoji
+    stripped (`to_speech_text`).
+  - A future real-time cooking-assistant mode is expected to read full
+    (short) replies.
+- **Verified end-to-end against the running app via `gradio_client`**: a
+  Supertonic-generated wav was posted to the browser-mic stream endpoint,
+  then `/poll_voice` triggered the turn.
+  - STT produced the right text, and general_chat called the exact-ingredient
+    search tool. Reply plus TTS arrived in 45s.
+  - The recipe path via text took 96s and produced a 15s spoken summary.
+  - `gradio_client` raises `KeyError: 'process_streaming'` when posting to a
+    streaming-input endpoint. That's a client-side limitation: the server
+    processes the chunk anyway.
+  - Not yet verified with a real voice or real mic in the browser (the
+    Chrome extension was disconnected); tracked in `TODO.md`.
+
 ## Development environment
 
 - Dependency/venv management: **uv**. Use `uv add <package>` to add dependencies,
