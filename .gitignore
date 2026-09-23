@@ -11,6 +11,7 @@ __pycache__/
 chroma_db/
 data/raw/
 data/cache/
+data/models/
 *.gguf
 
 .pytest_cache/

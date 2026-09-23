@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from dataclasses import dataclass
 
 from ..data.ingredient_index import find_recipes_by_ingredients
 from ..data.models import Recipe
@@ -9,10 +11,44 @@ from ..llm.client import chat
 from ..pricing.enuri_client import EnuriClient
 from ..pricing.price_lookup import RecipePriceEstimate, estimate_recipe_price
 from ..rag.search import RecipeSearcher
+from ..voice.tts import to_speech_text
 from .ingredient_correction import correct_ingredient_name
 from .router import RouteResult, route
 
-__all__ = ["handle_message", "RouteResult"]
+__all__ = ["handle_message", "Reply", "RouteResult"]
+
+
+@dataclass
+class Reply:
+    text: str
+    """Markdown shown in the chat window."""
+    speech: str
+    """Plain text for TTS — a short template summary for recipe replies
+    (the full price list + steps is too long to listen to), otherwise the
+    display text with markdown stripped."""
+
+
+def _speakable_recipe_name(name: str) -> str:
+    # Crawled titles carry tags like "[자취요리]" or "#라면맛있게끓이기".
+    name = re.sub(r"\[[^\]]*\]|#", " ", name)
+    return re.sub(r"\s{2,}", " ", name).strip()
+
+
+def recipe_speech_summary(recipe: Recipe, estimate: RecipePriceEstimate) -> str:
+    name = _speakable_recipe_name(recipe.name)
+    parts = [f"{name}예요." if name.endswith("레시피") else f"{name} 레시피예요."]
+    if recipe.servings is not None:
+        parts.append(f"{recipe.servings}인분 기준이에요.")
+    if estimate.total_price:
+        cost = f"재료를 전부 새로 사면 약 {estimate.total_price:,}원"
+        if estimate.total_portioned_cost:
+            cost += f"이고, 이번에 쓰는 양만 치면 약 {estimate.total_portioned_cost:,}원 정도예요."
+        else:
+            cost += " 정도예요."
+        parts.append(cost)
+    if recipe.steps:
+        parts.append(f"조리 순서는 {len(recipe.steps)}단계이고 화면에 정리해뒀어요.")
+    return " ".join(parts)
 
 _GENERAL_CHAT_SYSTEM_PROMPT = (
     "너는 친근한 요리 챗봇이다. 자연스러운 한국어로 대답해라. 두 가지 검색 도구가 있다: "
@@ -203,7 +239,7 @@ def handle_message(
     price_client: EnuriClient,
     conn: sqlite3.Connection,
     history: list[dict] | None = None,
-) -> str:
+) -> Reply:
     """Route a user message and produce a final reply.
 
     Fixed pipeline for the recipe/price path (search -> price -> compose),
@@ -216,14 +252,19 @@ def handle_message(
     result = route(user_message)
 
     if result.intent == "general_chat":
-        return _general_chat_reply(user_message, history or [], searcher, conn)
+        text = _general_chat_reply(user_message, history or [], searcher, conn)
+        return Reply(text=text, speech=to_speech_text(text))
 
     recipes = searcher.search(result.menu_name, top_k=1)
     if not recipes:
-        return f"'{result.menu_name}' 레시피를 찾지 못했어요. 다른 메뉴로 물어봐주실래요?"
+        text = f"'{result.menu_name}' 레시피를 찾지 못했어요. 다른 메뉴로 물어봐주실래요?"
+        return Reply(text=text, speech=text)
 
     recipe = recipes[0]
     estimate = estimate_recipe_price(
         recipe, price_client, conn, correct_name=correct_ingredient_name
     )
-    return _compose_recipe_reply(recipe, estimate)
+    return Reply(
+        text=_compose_recipe_reply(recipe, estimate),
+        speech=recipe_speech_summary(recipe, estimate),
+    )
