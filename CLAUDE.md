@@ -40,6 +40,17 @@ Stack decisions:
   cloud) is just changing `settings.llm_model`; RAG/tool-calling/routing
   orchestration itself is hand-built, not LangChain/LangGraph (deliberately
   deferred to a future project).
+  **RAM**: Ollama's default mmap model load kept ~9GB of *system RAM*
+  resident for qwen3:14b even with all 41 layers on the GPU (`ollama ps`
+  says 100% GPU). This got long local test runs killed for low memory
+  alongside BGE-M3 and other apps. `llm/client.chat` now sends
+  `use_mmap=False` for Ollama models. Measured on this PC:
+  - ROCm: free RAM 4.7GB -> 12.3GB, llama-server working set 8.7GB -> 0.7GB.
+  - Speed unchanged at ~32 tok/s either way.
+  - Vulkan (`OLLAMA_VULKAN`) was also tried: same RAM problem with mmap on,
+    same speed. So the backend wasn't the cause; stay on ROCm (the default).
+  - The option only takes effect when the model loads. If another app
+    already loaded qwen3 with mmap, it stays that way until it's unloaded.
   **Known quirk**: at default settings, qwen3:14b sometimes ignores a long
   data-summarization prompt and free-associates a generic reply instead of
   using the provided recipe/price data — reproduced once, not consistently.
