@@ -93,6 +93,16 @@ def get_recipes_by_ids(conn: sqlite3.Connection, rcp_seqs: list[str]) -> list[Re
     return [by_id[seq] for seq in rcp_seqs if seq in by_id]
 
 
+def get_recipe_by_name(conn: sqlite3.Connection, name: str) -> Recipe | None:
+    """Exact name match, ignoring spaces ("김치 찌개" == "김치찌개") — the
+    source data itself is inconsistent about spacing in names."""
+    row = conn.execute(
+        "SELECT * FROM recipes WHERE REPLACE(name, ' ', '') = ? LIMIT 1",
+        ("".join(name.split()),),
+    ).fetchone()
+    return row_to_recipe(row) if row else None
+
+
 def upsert_recipes(conn: sqlite3.Connection, recipes: list[Recipe]) -> None:
     conn.executemany(
         """
