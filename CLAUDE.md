@@ -114,8 +114,9 @@ Stack decisions:
   - To undo: `tailscale serve --https=443 off`. Check with
     `tailscale serve status`.
   - Verified from this PC through the ts.net URL: HTTP 200 with a valid
-    certificate, the page loads, and a chat turn round-trips. Not yet
-    verified from the phone itself; tracked in `TODO.md`.
+    certificate, the page loads, and a chat turn round-trips.
+    The user confirmed page access and chat from the iPhone the same day;
+    voice (mic, TTS playback) on the phone is still unchecked in `TODO.md`.
 - Auth: single-user password gate, not real multi-user support (this is a
   personal single-user tool by design — a "multi-user" deferred item never
   actually fit the product). `app.resolve_auth()` returns `None` (no login
