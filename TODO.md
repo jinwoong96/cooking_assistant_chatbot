@@ -1,5 +1,15 @@
 # 할 일
 
+## 폰에서 접속 (Tailscale) — 직접 확인 필요
+
+PC에서 앱을 켠 상태로 (`uv run python -m cooking_assistant_chatbot.app`)
+아이폰 Tailscale 앱이 연결돼 있으면 `https://frodan.tailefabc6.ts.net/` 로 접속.
+
+- [ ] 아이폰 Safari에서 페이지가 열리는지
+- [ ] 채팅 답변이 오는지 (재료비 질문은 1분 이상 걸릴 수 있음)
+- [ ] 브라우저 마이크: 마이크 권한 허용 → 녹음 → 말 끝나면 자동 전송되는지
+- [ ] 답변 읽어주기(TTS) 소리가 폰에서 재생되는지 (iOS는 자동재생이 막힐 수 있음)
+
 ## 음성 기능 — 직접 확인 필요
 
 TTS 샘플(Supertonic)은 채팅으로 보냈고 아래 폴더에도 있음 (임시 폴더라 지워질 수 있음):
@@ -11,8 +21,8 @@ TTS 샘플(Supertonic)은 채팅으로 보냈고 아래 폴더에도 있음 (임
   → 현재 기본값 `supertonic-2`, 바꾸려면 `.env`의 `TTS_MODEL`
 - [ ] **음성**: F1~F5, M1~M5 중 선택 → 현재 기본값 `F1`, `.env`의 `TTS_VOICE`
 - [ ] **숫자 읽기**: `_digits` 샘플에서 "51,927원", "2인분", "300g"이 자연스러운지.
-  어색하면 음성 요약 템플릿(`agent/pipeline.py`의 `recipe_speech_summary`)에서
-  숫자를 한글로 바꿔 넣도록 수정
+  어색하면 TTS 전처리(`voice/tts.py`의 `to_speech_text`)에서 숫자를 한글로
+  바꿔 읽도록 수정 (레시피 요약 템플릿은 도구 분리 때 없어지고 지금은 답변 전체를 읽음)
 - [ ] **실제 앱 음성**: `app_recipe_summary.wav`(레시피 템플릿 요약),
   `app_general_chat_reply.wav`(일반 대화 전체 읽기)가 괜찮은지
 
