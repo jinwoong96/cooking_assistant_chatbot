@@ -10,6 +10,7 @@ from .config import settings
 from .progress import run_with_progress
 from .data.db import get_connection
 from .pricing.enuri_client import EnuriClient
+from .pricing.selection import DEFAULT_PRICE_BASIS, PRICE_BASIS_LABELS
 from .rag.embeddings import BGEEmbeddingFunction
 from .rag.search import RecipeSearcher
 from .voice.controller import VoiceController
@@ -26,6 +27,9 @@ def _progress_message(status: str, elapsed_sec: float) -> dict:
     """Placeholder assistant bubble shown while a reply is being built;
     replaced by the real reply when it's done."""
     return {"role": "assistant", "content": f"⏳ {status or '처리 중'} · {int(elapsed_sec)}초"}
+
+
+_BASIS_BY_LABEL = {label: basis for basis, label in PRICE_BASIS_LABELS.items()}
 
 
 def _plain_history(history: list[dict]) -> list[dict]:
@@ -63,7 +67,7 @@ def build_app() -> gr.Blocks:
     devices = list_input_devices()
     device_labels = [d.label for d in devices]
 
-    def run_turn(message: str, history: list, tts_on: bool):
+    def run_turn(message: str, history: list, tts_on: bool, basis_label: str):
         message = (message or "").strip()
         if not message:
             yield gr.skip(), gr.skip(), gr.skip()
@@ -77,7 +81,13 @@ def build_app() -> gr.Blocks:
             prior = _plain_history(history[:-1])
             work = run_with_progress(
                 lambda report: handle_message(
-                    message, searcher, price_client, conn, history=prior, on_progress=report
+                    message,
+                    searcher,
+                    price_client,
+                    conn,
+                    history=prior,
+                    on_progress=report,
+                    price_basis=_BASIS_BY_LABEL.get(basis_label, DEFAULT_PRICE_BASIS),
                 )
             )
             while True:
@@ -98,12 +108,12 @@ def build_app() -> gr.Blocks:
         finally:
             voice.end_turn(speech_seconds)
 
-    def poll_voice(history: list, tts_on: bool):
+    def poll_voice(history: list, tts_on: bool, basis_label: str):
         text = None if voice.is_muted() else voice.pop_text()
         if not text:
             yield gr.skip(), gr.skip(), gr.skip()
             return
-        yield from run_turn(text, history, tts_on)
+        yield from run_turn(text, history, tts_on, basis_label)
 
     def on_source_change(source: str):
         if source != PC_MIC and voice.pc_mic.running:
@@ -133,7 +143,7 @@ def build_app() -> gr.Blocks:
             voice.preload_tts()
 
     with gr.Blocks(title="요리 챗봇") as app:
-        gr.Markdown("# 요리 챗봇\n메뉴 이름을 말하면 레시피와 예상 재료비를 알려드려요.")
+        gr.Markdown("# 요리 챗봇\n레시피 추천·만드는 법, 영양성분, 재료비 계산을 물어보세요.")
         chatbot = gr.Chatbot(height=520)
         with gr.Row():
             msg = gr.Textbox(placeholder="메시지를 입력하세요", show_label=False, scale=8)
@@ -146,6 +156,11 @@ def build_app() -> gr.Blocks:
                 "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
             ],
             inputs=msg,
+        )
+        price_basis = gr.Radio(
+            list(PRICE_BASIS_LABELS.values()),
+            value=PRICE_BASIS_LABELS[DEFAULT_PRICE_BASIS],
+            label="재료 가격 기준 (관련도: 검색 상위 최저가 · 최소 지출: 필요한 양 이상 중 가장 싼 상품 · 단위가격: g/ml당 최저가)",
         )
 
         with gr.Accordion("음성", open=True):
@@ -174,11 +189,12 @@ def build_app() -> gr.Blocks:
 
         turn_outputs = [chatbot, tts_audio, msg]
         turn_opts = dict(concurrency_id="chat_turn", concurrency_limit=1)
-        msg.submit(run_turn, [msg, chatbot, tts_on], turn_outputs, **turn_opts)
-        send.click(run_turn, [msg, chatbot, tts_on], turn_outputs, **turn_opts)
+        turn_inputs = [msg, chatbot, tts_on, price_basis]
+        msg.submit(run_turn, turn_inputs, turn_outputs, **turn_opts)
+        send.click(run_turn, turn_inputs, turn_outputs, **turn_opts)
 
         gr.Timer(_VOICE_POLL_SEC).tick(
-            poll_voice, [chatbot, tts_on], turn_outputs, trigger_mode="once", **turn_opts
+            poll_voice, [chatbot, tts_on, price_basis], turn_outputs, trigger_mode="once", **turn_opts
         )
         browser_mic.start_recording(voice.preload_stt)
         browser_mic.stream(

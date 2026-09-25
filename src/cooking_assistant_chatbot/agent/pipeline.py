@@ -6,6 +6,7 @@ from typing import Callable
 
 from ..llm.client import chat
 from ..pricing.enuri_client import EnuriClient
+from ..pricing.selection import DEFAULT_PRICE_BASIS, PriceBasis
 from ..rag.search import RecipeSearcher
 from ..voice.tts import to_speech_text
 from .tools import TOOLS, ToolContext, run_tool
@@ -27,7 +28,8 @@ _SYSTEM_PROMPT = (
     "- 추천·탐색 질문이면 search_recipes (가진 재료 목록이 있으면 search_recipes_by_ingredients)\n"
     "- 만드는 법·재료를 물으면 get_recipe\n"
     "- 칼로리·영양을 물으면 get_nutrition\n"
-    "- 가격·비용·재료비를 물으면 estimate_ingredient_cost (느리니 물어봤을 때만)\n"
+    "- 가격·비용·재료비를 물으면 estimate_ingredient_cost (느리니 물어봤을 때만). 결과에 적힌 "
+    "가격 기준을 답변에 함께 밝혀라\n"
     "질문이 여러 가지를 함께 물으면 필요한 도구를 차례로 여러 번 불러도 된다. "
     "'그거', '아까 그 메뉴'처럼 이전 대화를 가리키면 이전 대화에 나온 레시피 이름을 그대로 써라. "
     "재료 대체나 조리 팁처럼 일반 상식으로 충분한 질문은 도구 없이 바로 답해도 된다.\n"
@@ -70,6 +72,7 @@ def handle_message(
     conn: sqlite3.Connection,
     history: list[dict] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    price_basis: PriceBasis = DEFAULT_PRICE_BASIS,
 ) -> Reply:
     """Answer one user message with a tool-calling loop.
 
@@ -83,9 +86,19 @@ def handle_message(
     `on_progress` receives short Korean status lines ("재료 가격 조회 중
     (3/18 · 두부)") for the UI to show while a reply is being built — a cost
     lookup can take 100s+.
+
+    `price_basis` is the UI's default for which product each ingredient is
+    priced at (see `pricing.selection`); the model can override it per
+    request when the user asks ("소량으로 계산해줘").
     """
     report = on_progress or (lambda _status: None)
-    ctx = ToolContext(searcher=searcher, price_client=price_client, conn=conn, report=report)
+    ctx = ToolContext(
+        searcher=searcher,
+        price_client=price_client,
+        conn=conn,
+        report=report,
+        price_basis=price_basis,
+    )
 
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
     messages.extend(history or [])

@@ -44,3 +44,23 @@ def parse_quantity(text: str) -> Quantity | None:
         return Quantity(value=value, unit="ml")
 
     return None
+
+
+def parse_package_quantity(title: str) -> Quantity | None:
+    """A product title's package size: the *largest* weight (else volume)
+    in it, not the first. Titles often mention a smaller number before the
+    package size — "수미감자 소 (조림용 40g 미만) 10kg" is a 10kg sack,
+    "올리브오일 140g (10g x 14포)" is 140g."""
+    weights = [
+        float(m.group(1)) * (1000 if m.group(2).lower() == "kg" else 1)
+        for m in _WEIGHT_RE.finditer(title)
+    ]
+    if weights:
+        return Quantity(value=max(weights), unit="g")
+    volumes = [
+        float(m.group(1)) * (1000 if m.group(2).lower() == "l" else 1)
+        for m in _VOLUME_RE.finditer(title)
+    ]
+    if volumes:
+        return Quantity(value=max(volumes), unit="ml")
+    return None

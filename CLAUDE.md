@@ -117,23 +117,37 @@ Stack decisions:
   Results are cached in SQLite (`price_cache` table, 24h TTL, see
   `pricing/cache.py`) so repeat lookups don't re-hit the site. The client
   self-throttles to >=1 req/sec per price.enuri.com's robots.txt Crawl-delay.
-  **Product choice is relevance-first.** `pick_relevant_cheapest` works
-  like this:
-  - Take only enuri's top 5 results, in enuri's own relevance order.
-  - Among those, prefer titles that contain the ingredient name, ignoring
-    spaces.
-  - Return the cheapest of that set. If no title contains the name, fall
-    back to the cheapest of the top 5, since spelling variants are common
-    (달걀 -> "계란", 케첩 -> "케찹").
+  **Product choice is a user-selectable "price basis"**
+  (`pricing/selection.py`). The UI radio sets the default. The
+  `estimate_ingredient_cost` tool's optional `price_basis` argument
+  overrides it when the user asks in chat (e.g. "돈 적게 드는 걸로"; verified
+  with qwen3). Each basis is part of the price cache key. The bases:
+  - `relevance` (default): the cheapest of enuri's top 5 relevance-ordered
+    results, preferring titles that contain the ingredient name. The old
+    logic took the cheapest of all ~40 results, and 29 of 76 cached matches
+    didn't even name the ingredient (밥 -> latte powder, 고춧가루 ->
+    vinegar). The catch: produce at the top is mostly 5-10kg sacks.
+  - `min_spend`: the least money out of pocket, among packages that cover
+    the recipe's parsed need (or among all candidates if the need can't be
+    parsed).
+    - This replaced a first try at "smallest package first". enuri's price
+      for a small item is often a multi-pack price ("스팸 120g" at 19,350원
+      vs "스팸 300g" at 3,430원), so smallest-first came out more expensive
+      than `relevance`.
+    - Measured: 오므라이스 92,340 -> 59,030원, 된장 두부찌개 63,930 ->
+      29,970원.
+  - `unit_price`: the lowest price per g/ml. Picks bulk items (25kg salt for
+    "소금 약간"); that's the intended trade-off.
 
-  Why: the old logic took the cheapest of all ~40 results. In the price
-  cache, 29 of 76 matches didn't even name the ingredient, while enuri's top
-  results were correct:
-  - 밥 matched a latte powder (should be 햇반).
-  - 고춧가루 matched apple vinegar.
-  - 청고추 matched packing string.
-
-  The price cache was cleared once after this change.
+  How `min_spend` and `unit_price` pick candidates:
+  - They look at all results, but only accept titles where some word *ends
+    with* the ingredient name. Korean compounds put the head noun last, so
+    수미감자, 진간장 and 흑미밥 pass, while 감자칩 and 대파분태 don't.
+  - Package size is the *largest* amount in the title
+    (`unit_parser.parse_package_quantity`). With the first match, "감자 소
+    (조림용 40g 미만) 10kg" read as 40g.
+  - If a basis has nothing usable (e.g. eggs are sold by 구, with no g/ml),
+    it falls back to `relevance`.
   All other options were tried and ruled out first, in this order — don't
   re-research from scratch, revisit only if 에누리 itself becomes a problem
   (e.g. starts blocking or its markup changes in a way that breaks scraping):

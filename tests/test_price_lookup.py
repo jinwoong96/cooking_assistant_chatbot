@@ -9,7 +9,7 @@ class _StubClient:
         self._prices = prices
         self.call_count = 0
 
-    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+    def search(self, query: str) -> list[ShoppingItem]:
         self.call_count += 1
         if query not in self._prices:
             return []
@@ -75,7 +75,7 @@ class _StubClientWithSizedProducts:
     def __init__(self, data: dict[str, tuple[int, str]]):
         self._data = data
 
-    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+    def search(self, query: str) -> list[ShoppingItem]:
         if query not in self._data:
             return []
         price, title = self._data[query]
@@ -122,7 +122,7 @@ class _RecordingClient:
         self._known = known
         self.queries: list[str] = []
 
-    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+    def search(self, query: str) -> list[ShoppingItem]:
         self.queries.append(query)
         if query not in self._known:
             return []
@@ -189,3 +189,26 @@ def test_estimate_recipe_price_reports_progress_per_ingredient(tmp_path):
     )
 
     assert calls == [(1, 2, "김치"), (2, 2, "두부")]
+
+
+def test_cache_is_kept_per_price_basis(tmp_path):
+    class _Sized:
+        def __init__(self):
+            self.calls = 0
+
+        def search(self, query: str) -> list[ShoppingItem]:
+            self.calls += 1
+            return [ShoppingItem(title="김치 10kg", price=9000), ShoppingItem(title="김치 500g", price=3000)]
+
+    recipe = Recipe(rcp_seq="1", name="김치찌개", ingredients_raw="김치 200g")
+    client = _Sized()
+    conn = _conn(tmp_path)
+
+    small = estimate_recipe_price(recipe, client, conn, basis="min_spend")
+    value = estimate_recipe_price(recipe, client, conn, basis="unit_price")
+    small_again = estimate_recipe_price(recipe, client, conn, basis="min_spend")
+
+    assert small.ingredient_prices[0].cheapest_item.title == "김치 500g"
+    assert value.ingredient_prices[0].cheapest_item.title == "김치 10kg"
+    assert small_again.ingredient_prices[0].cheapest_item.title == "김치 500g"
+    assert client.calls == 2
