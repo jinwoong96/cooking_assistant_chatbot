@@ -7,23 +7,43 @@ dish in natural language; the app finds a recipe and looks up the cheapest price
 for each ingredient so the user can cook it affordably. This is also a learning
 project for building a local-first RAG + tool-calling AI agent.
 
-Core flow (implemented in `agent/router.py` + `agent/pipeline.py`): user
-message -> intent router (single LLM tool-call that both classifies
-recipe-request vs. general-chat *and*, for recipe requests, extracts the menu
-name in one shot) -> RAG recipe search -> ingredient extraction/normalization
-(rule-based first, LLM correction for names it leaves ambiguous — see
-`agent/ingredient_correction.py`) -> lookup of ingredient prices by scraping
-에누리(enuri.com) -> a final LLM call
-composes the reply from that data. general_chat is now history-aware (takes
-Gradio's OpenAI-style message list as prior turns, so follow-ups like "그거
-말고 다른 건?" work) and has two search tools it can call: `search_recipes_
-by_ingredients` (exact — see below) for "냉장고에 두부랑 계란 있는데 뭐
-해먹지?"-style questions, and `search_recipes_by_style` (the RAG/semantic
-search) for mood/style/similar-menu questions. Falls back to the LLM's own
-knowledge (e.g. substitution questions) when it doesn't call either tool.
-The recipe/price path itself stays single-shot/stateless (each request
-names its own dish, so it doesn't need
-history) — only general_chat got history threaded through.
+Core flow (`agent/pipeline.py` + `agent/tools.py`): a single tool-calling
+agent loop. The user message (plus Gradio's prior turns as history) goes to
+the LLM with five tools, and the model calls only what the question needs:
+- `search_recipes(query)`: RAG/semantic search for recommendations and
+  "similar menu" questions.
+- `search_recipes_by_ingredients(ingredients)`: exact match; see below.
+- `get_recipe(recipe_name)`: ingredients, servings, and steps.
+- `get_nutrition(recipe_name)`: COOKRCP01's nutrition fields. The
+  만개의레시피 recipes have none, and the tool says so instead of guessing.
+- `estimate_ingredient_cost(recipe_name)`: enuri price lookup with
+  portioned cost, via `estimate_recipe_price`. This is the slow one
+  (1 req/sec per ingredient).
+
+Design notes:
+- **Why tools replaced a router.** This used to be an intent router
+  (recipe-request vs. general-chat) followed by a fixed
+  search -> price-every-ingredient -> compose pipeline. That meant "칼로리
+  알려줘" also waited ~100s on price lookups it didn't ask for. The user
+  asked for answers that fit what was actually asked, so each capability
+  became a tool.
+- **Tools take a recipe name, not an id.** `_resolve_recipe` tries an exact
+  name match first (spaces ignored, `db.get_recipe_by_name`), then falls
+  back to semantic top-1. The result says when it's only a near match.
+  Because only final replies are kept in history, follow-ups ("그거
+  칼로리는?") work by reusing the name from the previous reply, with no
+  extra session state.
+- **Loop limits.** Up to `MAX_TOOL_ROUNDS` (4) rounds of tool calls are
+  allowed, so compound questions like "추천하고 재료비도" can chain. The
+  final round offers no tools, which forces an answer.
+- **Temperature 0.3** throughout, per the grounding quirk below. The system
+  prompt tells the model to use only tool data and not ask the user
+  questions back.
+- **Cost results state their coverage.** The portioned-cost total says how
+  many ingredients it covers ("18개 중 3개만 계산됨"). Before, a total like
+  오므라이스's 697원 read as the whole dish's cost.
+- General knowledge questions (e.g. substitutions) are answered with no tool
+  call.
 
 Stack decisions:
 - Backend: Python (FastAPI)
@@ -54,7 +74,8 @@ Stack decisions:
   **Known quirk**: at default settings, qwen3:14b sometimes ignores a long
   data-summarization prompt and free-associates a generic reply instead of
   using the provided recipe/price data — reproduced once, not consistently.
-  Fixed for the recipe-compose step in `agent/pipeline.py` with (a) an
+  Fixed (originally for the old recipe-compose step, now applied to the whole
+  agent loop in `agent/pipeline.py`) with (a) an
   explicit system prompt stating this is a data-grounded reply, not the
   start of a conversation, and telling it not to ask the user questions back,
   and (b) `temperature=0.3` instead of the default. Re-tested 3x after the
@@ -142,8 +163,8 @@ ingredient_name, built from the already-parsed ingredient names) +
 substring matches, ranked by fewest total ingredients). Rebuild after any
 data change with `python -m cooking_assistant_chatbot.data.build_ingredient_index`
 (not automatic — same pattern as the RAG index build). Wired into
-general_chat as the `search_recipes_by_ingredients` tool, alongside the
-existing RAG search (now named `search_recipes_by_style`) for mood/style
+the agent as the `search_recipes_by_ingredients` tool, alongside the
+existing RAG search (now `search_recipes`) for mood/style
 questions.
 
 Also found and fixed a real ingredient_parser bug while building this: the
@@ -213,8 +234,7 @@ now; revisit if this becomes the dominant cost once used day to day.
 not a stored column) parses a leading "[N인분]" marker from `ingredients_raw`
 when present. Only ~3.5% of recipes (40/1156) state this — no other field in
 COOKRCP01 reliably gives a serving count (`INFO_WGT` is grams *per* serving,
-not how many servings). Returns None otherwise; the compose-reply system
-prompt in `agent/pipeline.py` explicitly tells the model not to guess or
+not how many servings). Returns None otherwise; `agent/tools.format_recipe_detail` explicitly tells the model not to guess or
 mention a serving count when it's None, verified against both a recipe that
 has one (reported "(2인분)") and one that doesn't (reported "제공되지
 않음", didn't fabricate a number).
@@ -245,7 +265,7 @@ fix was UI-side instead:
 - **Progress display**: `handle_message(on_progress=...)` reports short
   Korean status lines — "요청 이해하는 중", "'X' 레시피 찾는 중",
   "재료 가격 조회 중 (3/9 · 두부)" via `estimate_recipe_price(on_progress=...)`,
-  "답변 작성 중", and "레시피 DB에서 찾는 중" for general chat.
+  and "답변 작성 중". Each tool in `agent/tools.run_tool` reports its own.
   - `progress.run_with_progress()` runs the turn on a worker thread and
     yields the latest status, re-yielding every second while idle.
   - `app.run_turn` shows it as a placeholder assistant bubble
@@ -303,11 +323,11 @@ live in `TODO.md`.
     enough, with the caveat that its mecab dependencies often conflict on
     Windows.
 - **What gets spoken**: `handle_message()` returns a `Reply(text, speech)`.
-  - Recipe replies speak a fixed template (`recipe_speech_summary`: menu,
-    servings, both costs, step count). The user asked for a summary, not the
-    full price list, and a template adds no LLM latency.
-  - General-chat replies speak the full text with markdown and emoji
-    stripped (`to_speech_text`).
+  - Every reply speaks its full text with markdown and emoji stripped
+    (`to_speech_text`). There used to be a fixed recipe template
+    (`recipe_speech_summary`). It was dropped with the tool refactor, at the
+    user's choice: replies now fit the question, so they're usually short
+    enough to read in full.
   - A future real-time cooking-assistant mode is expected to read full
     (short) replies.
 - **Verified end-to-end against the running app via `gradio_client`**: a

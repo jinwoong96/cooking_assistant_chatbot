@@ -139,7 +139,12 @@ def build_app() -> gr.Blocks:
             msg = gr.Textbox(placeholder="메시지를 입력하세요", show_label=False, scale=8)
             send = gr.Button("보내기", variant="primary", scale=1)
         gr.Examples(
-            ["김치찌개 해먹고 싶어", "된장찌개 레시피 알려줘", "냉장고에 두부랑 계란 있는데 뭐 해먹지?"],
+            [
+                "된장찌개 어떻게 만들어?",
+                "김치찌개 칼로리 얼마야?",
+                "오므라이스 재료비 얼마나 들어?",
+                "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
+            ],
             inputs=msg,
         )
 
