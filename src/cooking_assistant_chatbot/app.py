@@ -143,7 +143,7 @@ def build_app() -> gr.Blocks:
             voice.preload_tts()
 
     with gr.Blocks(title="요리 챗봇") as app:
-        gr.Markdown("# 요리 챗봇\n메뉴 이름을 말하면 레시피와 예상 재료비를 알려드려요.")
+        gr.Markdown("# 요리 챗봇\n레시피 추천·만드는 법, 영양성분, 재료비 계산을 물어보세요.")
         chatbot = gr.Chatbot(height=520)
         with gr.Row():
             msg = gr.Textbox(placeholder="메시지를 입력하세요", show_label=False, scale=8)
