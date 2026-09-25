@@ -98,9 +98,25 @@ Stack decisions:
   page's schema.org `Recipe` JSON-LD block (same technique as the enuri
   price scraper), which conveniently gives already-clean ingredient strings
   (e.g. "떡 2컵") instead of COOKRCP01's messy free-text blob.
-- Deployment: localhost only for now; if remote access is needed later, add
-  Tailscale (not done) + Gradio `auth=` (done — see below) rather than
-  redesigning anything
+- Deployment: the app still binds to localhost. Remote access (the user's
+  phone) goes through **Tailscale Serve**, set up 2026-09-25. No code
+  change was needed.
+  - Installed with `winget install Tailscale.Tailscale`. The PC joined the
+    user's tailnet as `frodan`; the user's iPhone was already on it.
+  - `tailscale serve --bg 7860` proxies
+    `https://frodan.tailefabc6.ts.net/` -> `http://127.0.0.1:7860`. It
+    persists across reboots, and the Tailscale service starts with Windows.
+    The chat app itself still has to be running.
+  - HTTPS matters: the browser mic (`getUserMedia`) only works in a secure
+    context, so a plain `http://100.x.x.x:7860` wouldn't do for voice.
+  - It's **tailnet-only**. Funnel (public internet) was deliberately left
+    off, so `APP_PASSWORD` is optional. Set it if Funnel is ever turned on.
+  - To undo: `tailscale serve --https=443 off`. Check with
+    `tailscale serve status`.
+  - Verified from this PC through the ts.net URL: HTTP 200 with a valid
+    certificate, the page loads, and a chat turn round-trips.
+    The user confirmed page access and chat from the iPhone the same day;
+    voice (mic, TTS playback) on the phone is still unchecked in `TODO.md`.
 - Auth: single-user password gate, not real multi-user support (this is a
   personal single-user tool by design — a "multi-user" deferred item never
   actually fit the product). `app.resolve_auth()` returns `None` (no login
