@@ -19,3 +19,6 @@ data/models/
 
 # Claude Code session-local state, not project content
 .claude/
+
+# Personal troubleshooting log, kept local
+TROUBLESHOOTING.md
