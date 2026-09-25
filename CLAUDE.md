@@ -227,12 +227,29 @@ but total portioned cost was only 5,074원 — 5 of 18 ingredients (물, 참기�
 청주 — unit mismatch; 청양고추 — no size in title; 달걀 — sold by count)
 couldn't get a portioned figure, which is expected and surfaced to the user
 rather than silently dropped.
-Known latency quirk: a recipe with ~18 uncached ingredients took ~100s+
-end-to-end in real browser testing (enuri's 1 req/sec throttle dominates,
-plus two sequential local-LLM calls). Not fixed for MVP — parallelizing
-price lookups would violate the crawl-delay's intent even across multiple
-client instances, so the fix, if pursued, should be UI-side (streaming/
-progress indication) rather than trying to go faster.
+Latency: a recipe with ~18 uncached ingredients takes ~100s end-to-end. The
+enuri 1 req/sec throttle dominates, plus two sequential local-LLM calls.
+Parallelizing price lookups would violate the crawl-delay's intent, so the
+fix was UI-side instead:
+- **Progress display**: `handle_message(on_progress=...)` reports short
+  Korean status lines — "요청 이해하는 중", "'X' 레시피 찾는 중",
+  "재료 가격 조회 중 (3/9 · 두부)" via `estimate_recipe_price(on_progress=...)`,
+  "답변 작성 중", and "레시피 DB에서 찾는 중" for general chat.
+  - `progress.run_with_progress()` runs the turn on a worker thread and
+    yields the latest status, re-yielding every second while idle.
+  - `app.run_turn` shows it as a placeholder assistant bubble
+    ("⏳ … · 42초") and replaces it with the real reply when done.
+- **Cold start**: timing the stages exposed a ~40s "레시피 찾는 중" on the
+  first request after startup. That was BGE-M3 loading lazily on the first
+  search. It's now preloaded on a background thread at startup
+  (`BGEEmbeddingFunction.load()`, locked against a concurrent first
+  request). Measured on a first request after startup:
+  - Recipe search took 0.2s (was ~40s).
+  - The remaining time is the price lookups for uncached ingredients and
+    the LLM compose step.
+  - A fully cached repeat request took 29.5s.
+- Not addressed: Ollama unloads qwen3:14b after idle (default keep_alive ~5
+  min), so the first LLM call after a break also pays a model load.
 
 ## Voice I/O (`voice/`)
 

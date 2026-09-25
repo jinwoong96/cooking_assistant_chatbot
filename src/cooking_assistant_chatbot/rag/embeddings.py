@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Sequence
 
 from chromadb.api.types import Documents, EmbeddingFunction
@@ -17,13 +18,22 @@ class BGEEmbeddingFunction(EmbeddingFunction[Documents]):
         self._model_name = model_name
         self._device = device
         self._model = None
+        self._load_lock = threading.Lock()
 
     def _get_model(self):
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
+        # Locked: the app preloads this on a background thread at startup, and
+        # a first request arriving mid-load must wait rather than load it twice.
+        with self._load_lock:
+            if self._model is None:
+                from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name, device=self._device)
+                self._model = SentenceTransformer(self._model_name, device=self._device)
         return self._model
+
+    def load(self) -> None:
+        """Load the model now instead of on the first search. On first use
+        this took ~40s here — the bulk of a cold first reply."""
+        self._get_model()
 
     def __call__(self, input: Sequence[str]) -> list[list[float]]:
         embeddings = self._get_model().encode(list(input), normalize_embeddings=True)

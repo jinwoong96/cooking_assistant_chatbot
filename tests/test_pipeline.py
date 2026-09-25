@@ -225,3 +225,54 @@ def test_recipe_speech_summary_cleans_crawled_title_tags():
 
     assert speech.startswith("초간단 떡볶이 황금 레시피예요.")
     assert "원" not in speech  # no price sentence when nothing was priced
+
+
+def test_recipe_path_reports_each_stage_including_ingredient_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "route", lambda msg: RouteResult(intent="recipe_price", menu_name="김치찌개")
+    )
+    monkeypatch.setattr(pipeline, "chat", lambda **kwargs: fake_text_response("답변"))
+    conn = get_connection(str(tmp_path / "test.db"))
+    statuses = []
+
+    pipeline.handle_message(
+        "김치찌개 해먹고 싶어",
+        _StubSearcher([_recipe()]),
+        _StubPriceClient(),
+        conn,
+        on_progress=statuses.append,
+    )
+
+    assert statuses == [
+        "요청 이해하는 중",
+        "'김치찌개' 레시피 찾는 중",
+        "재료 가격 조회 중 (1/1 · 김치)",
+        "답변 작성 중",
+    ]
+
+
+def test_general_chat_reports_db_search_when_a_tool_is_called(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "route", lambda msg: RouteResult(intent="general_chat"))
+    calls = []
+
+    def fake_chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return fake_tool_call_response("search_recipes_by_style", {"query": "국물"})
+        return fake_text_response("추천")
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+    conn = get_connection(str(tmp_path / "test.db"))
+    statuses = []
+
+    pipeline.handle_message(
+        "국물요리 추천", _StubSearcher([_recipe()]), _StubPriceClient(), conn,
+        on_progress=statuses.append,
+    )
+
+    assert statuses == [
+        "요청 이해하는 중",
+        "답변 생각하는 중",
+        "레시피 DB에서 찾는 중",
+        "찾은 레시피로 답변 작성 중",
+    ]

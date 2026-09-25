@@ -116,6 +116,7 @@ def estimate_recipe_price(
     client: EnuriClient,
     conn: sqlite3.Connection,
     correct_name: CorrectName | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> RecipePriceEstimate:
     """Parse a recipe's ingredients and look up the cheapest matching product for each.
 
@@ -129,13 +130,19 @@ def estimate_recipe_price(
     callback rather than importing the LLM client directly so this module
     stays pure/LLM-free and easy to test.
 
+    `on_progress(done_count, total, ingredient_name)` is called before each
+    ingredient is looked up (1-based), so the UI can show progress during
+    what's usually the slowest part of a reply (enuri's 1 req/sec throttle).
+
     This is the plain function that a future tool-calling layer would expose
     to the LLM agent; wiring that up is a separate, later feature.
     """
     parsed = parse_ingredients(recipe.ingredients_raw, recipe_name=recipe.name)
 
     ingredient_prices = []
-    for ingredient in parsed:
+    for index, ingredient in enumerate(parsed, start=1):
+        if on_progress is not None:
+            on_progress(index, len(parsed), ingredient.name)
         cheapest = get_cached_price(conn, ingredient.name)
         if cheapest is None:
             items = _search_with_correction(

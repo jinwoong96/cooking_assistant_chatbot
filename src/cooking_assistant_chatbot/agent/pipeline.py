@@ -4,6 +4,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from typing import Callable
 
 from ..data.ingredient_index import find_recipes_by_ingredients
 from ..data.models import Recipe
@@ -184,6 +185,7 @@ def _general_chat_reply(
     history: list[dict],
     searcher: RecipeSearcher,
     conn: sqlite3.Connection,
+    report: Callable[[str], None],
 ) -> str:
     """LLM passthrough for anything that isn't a specific recipe/price
     request, optionally grounded in the recipe DB via search tools (exact
@@ -196,6 +198,7 @@ def _general_chat_reply(
     messages.extend(history)
     messages.append({"role": "user", "content": user_message})
 
+    report("답변 생각하는 중")
     response = chat(messages=messages, tools=_GENERAL_CHAT_TOOLS)
     message = response.choices[0].message
     tool_calls = message.tool_calls or []
@@ -203,7 +206,9 @@ def _general_chat_reply(
         return message.content
 
     call = tool_calls[0]
+    report("레시피 DB에서 찾는 중")
     results = _run_general_chat_tool(call, searcher, conn)
+    report("찾은 레시피로 답변 작성 중")
 
     messages.append(
         {
@@ -239,6 +244,7 @@ def handle_message(
     price_client: EnuriClient,
     conn: sqlite3.Connection,
     history: list[dict] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> Reply:
     """Route a user message and produce a final reply.
 
@@ -248,13 +254,20 @@ def handle_message(
     OpenAI-style message list) is only threaded into the general-chat path;
     the recipe/price path stays single-shot since each request names its own
     dish.
+
+    `on_progress` receives short Korean status lines ("재료 가격 조회 중
+    (3/18 · 두부)") for the UI to show while a reply is being built — a
+    recipe reply can take 100s+.
     """
+    report = on_progress or (lambda _status: None)
+    report("요청 이해하는 중")
     result = route(user_message)
 
     if result.intent == "general_chat":
-        text = _general_chat_reply(user_message, history or [], searcher, conn)
+        text = _general_chat_reply(user_message, history or [], searcher, conn, report)
         return Reply(text=text, speech=to_speech_text(text))
 
+    report(f"'{result.menu_name}' 레시피 찾는 중")
     recipes = searcher.search(result.menu_name, top_k=1)
     if not recipes:
         text = f"'{result.menu_name}' 레시피를 찾지 못했어요. 다른 메뉴로 물어봐주실래요?"
@@ -262,8 +275,13 @@ def handle_message(
 
     recipe = recipes[0]
     estimate = estimate_recipe_price(
-        recipe, price_client, conn, correct_name=correct_ingredient_name
+        recipe,
+        price_client,
+        conn,
+        correct_name=correct_ingredient_name,
+        on_progress=lambda done, total, name: report(f"재료 가격 조회 중 ({done}/{total} · {name})"),
     )
+    report("답변 작성 중")
     return Reply(
         text=_compose_recipe_reply(recipe, estimate),
         speech=recipe_speech_summary(recipe, estimate),
