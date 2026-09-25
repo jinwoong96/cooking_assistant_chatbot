@@ -22,6 +22,12 @@ from ..data.ingredient_index import find_recipes_by_ingredients
 from ..data.models import Recipe
 from ..pricing.enuri_client import EnuriClient
 from ..pricing.price_lookup import RecipePriceEstimate, estimate_recipe_price
+from ..pricing.selection import (
+    DEFAULT_PRICE_BASIS,
+    PRICE_BASES,
+    PRICE_BASIS_LABELS,
+    PriceBasis,
+)
 from ..rag.search import RecipeSearcher
 from .ingredient_correction import correct_ingredient_name
 
@@ -32,6 +38,8 @@ class ToolContext:
     price_client: EnuriClient
     conn: sqlite3.Connection
     report: Callable[[str], None]
+    price_basis: PriceBasis = DEFAULT_PRICE_BASIS
+    """The UI's default; a request can override it per call."""
 
 
 def _recipe_name_param(description: str) -> dict:
@@ -123,7 +131,23 @@ TOOLS: list[dict[str, Any]] = [
                 "금액과, 레시피에 쓰는 양만큼의 원가). 재료 하나당 1초 이상 걸려 느리므로, 사용자가 "
                 "가격·비용·재료비를 물었을 때만 사용한다."
             ),
-            "parameters": _recipe_name_param(_RECIPE_NAME_DESC),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipe_name": {"type": "string", "description": _RECIPE_NAME_DESC},
+                    "price_basis": {
+                        "type": "string",
+                        "enum": list(PRICE_BASES),
+                        "description": (
+                            "상품 고르는 기준. 사용자가 기준을 말했을 때만 넣는다: "
+                            "'소량만', '작은 거', '돈 적게', '1인분만 살래' → min_spend, "
+                            "'가성비', '단위가격', '대용량이 싸면' → unit_price, "
+                            "'제일 잘 맞는 상품' → relevance. 말하지 않았으면 생략."
+                        ),
+                    },
+                },
+                "required": ["recipe_name"],
+            },
         },
     },
 ]
@@ -200,8 +224,21 @@ def format_nutrition(requested: str, recipe: Recipe) -> str:
     return "\n".join(lines)
 
 
-def format_cost(requested: str, recipe: Recipe, estimate: RecipePriceEstimate) -> str:
+_BASIS_EXPLANATIONS: dict[PriceBasis, str] = {
+    "relevance": "검색 상위 상품 중 최저가 (대용량 포장이 많음)",
+    "min_spend": "레시피에 필요한 양 이상인 상품 중 지금 내는 돈이 가장 적은 것",
+    "unit_price": "g/ml당 가격이 가장 싼 상품 (가성비)",
+}
+
+
+def format_cost(
+    requested: str,
+    recipe: Recipe,
+    estimate: RecipePriceEstimate,
+    basis: PriceBasis = DEFAULT_PRICE_BASIS,
+) -> str:
     lines = [_found_header(requested, recipe)]
+    lines.append(f"가격 기준: {PRICE_BASIS_LABELS[basis]} — {_BASIS_EXPLANATIONS[basis]}")
     if recipe.servings is not None:
         lines.append(f"인분 수: {recipe.servings}인분")
     lines.append("재료별 최저가:")
@@ -256,6 +293,9 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
             return format_recipe_detail(requested, recipe)
         if name == "get_nutrition":
             return format_nutrition(requested, recipe)
+        basis = args.get("price_basis")
+        if basis not in PRICE_BASES:
+            basis = ctx.price_basis
         estimate = estimate_recipe_price(
             recipe,
             ctx.price_client,
@@ -264,7 +304,8 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
             on_progress=lambda done, total, ingredient: ctx.report(
                 f"재료 가격 조회 중 ({done}/{total} · {ingredient})"
             ),
+            basis=basis,
         )
-        return format_cost(requested, recipe, estimate)
+        return format_cost(requested, recipe, estimate, basis)
 
     return f"알 수 없는 도구: {name}"

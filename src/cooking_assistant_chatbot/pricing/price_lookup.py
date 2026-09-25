@@ -9,7 +9,8 @@ from ..data.models import Recipe
 from .cache import get_cached_price, set_cached_price
 from .enuri_client import EnuriClient, ShoppingItem
 from .ingredient_parser import parse_ingredients
-from .unit_parser import parse_quantity
+from .selection import DEFAULT_PRICE_BASIS, PriceBasis, choose_item
+from .unit_parser import parse_package_quantity, parse_quantity
 
 CorrectName = Callable[[str, str], "str | None"]
 
@@ -68,7 +69,7 @@ class RecipePriceEstimate(BaseModel):
 
 def _compute_portioned_cost(recipe_quantity_text: str, item: ShoppingItem) -> int | None:
     recipe_qty = parse_quantity(recipe_quantity_text)
-    package_qty = parse_quantity(item.title)
+    package_qty = parse_package_quantity(item.title)
     if recipe_qty is None or package_qty is None:
         return None
     if recipe_qty.unit != package_qty.unit or package_qty.value == 0:
@@ -85,30 +86,32 @@ def _search_with_correction(
     name: str,
     ingredients_context: str,
     correct_name: CorrectName | None,
-) -> list[ShoppingItem]:
+) -> tuple[list[ShoppingItem], str]:
     """Search for `name`, optionally cleaning it up via `correct_name` first
     (when it looks ambiguous) or as a fallback (when the plain search finds
-    nothing). Returns [] if `correct_name` decides this isn't a real
-    purchasable ingredient at all."""
+    nothing). Returns the results (in relevance order) and the name that
+    was actually searched; results are [] if `correct_name` decides this
+    isn't a real purchasable ingredient at all."""
     already_corrected = False
     search_name = name
 
     if correct_name is not None and _looks_ambiguous(name):
         corrected = correct_name(name, ingredients_context)
         if corrected is None:
-            return []
+            return [], name
         search_name = corrected
         already_corrected = True
 
-    items = client.search_cheapest(search_name, limit=1)
+    items = client.search(search_name)
 
     if not items and not already_corrected and correct_name is not None:
         corrected = correct_name(name, ingredients_context)
         if corrected is None:
-            return []
-        items = client.search_cheapest(corrected, limit=1)
+            return [], name
+        search_name = corrected
+        items = client.search(search_name)
 
-    return items
+    return items, search_name
 
 
 def estimate_recipe_price(
@@ -117,6 +120,7 @@ def estimate_recipe_price(
     conn: sqlite3.Connection,
     correct_name: CorrectName | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
+    basis: PriceBasis = DEFAULT_PRICE_BASIS,
 ) -> RecipePriceEstimate:
     """Parse a recipe's ingredients and look up the cheapest matching product for each.
 
@@ -134,8 +138,9 @@ def estimate_recipe_price(
     ingredient is looked up (1-based), so the UI can show progress during
     what's usually the slowest part of a reply (enuri's 1 req/sec throttle).
 
-    This is the plain function that a future tool-calling layer would expose
-    to the LLM agent; wiring that up is a separate, later feature.
+    `basis` picks which search result each ingredient is priced at — see
+    `pricing.selection`. It's part of the cache key, so switching bases
+    re-searches rather than reusing another basis's pick.
     """
     parsed = parse_ingredients(recipe.ingredients_raw, recipe_name=recipe.name)
 
@@ -143,14 +148,15 @@ def estimate_recipe_price(
     for index, ingredient in enumerate(parsed, start=1):
         if on_progress is not None:
             on_progress(index, len(parsed), ingredient.name)
-        cheapest = get_cached_price(conn, ingredient.name)
+        cache_key = f"{ingredient.name}|{basis}"
+        cheapest = get_cached_price(conn, cache_key)
         if cheapest is None:
-            items = _search_with_correction(
+            items, searched = _search_with_correction(
                 client, ingredient.name, recipe.ingredients_raw, correct_name
             )
-            cheapest = items[0] if items else None
+            cheapest = choose_item(items, searched, ingredient.quantity_text, basis)
             if cheapest is not None:
-                set_cached_price(conn, ingredient.name, cheapest)
+                set_cached_price(conn, cache_key, cheapest)
 
         portioned_cost = (
             _compute_portioned_cost(ingredient.quantity_text, cheapest) if cheapest else None

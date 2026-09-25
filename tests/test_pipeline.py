@@ -17,7 +17,7 @@ class _StubPriceClient:
     def __init__(self):
         self.queries = []
 
-    def search_cheapest(self, query: str, limit: int = 1) -> list[ShoppingItem]:
+    def search(self, query: str) -> list[ShoppingItem]:
         self.queries.append(query)
         return [ShoppingItem(title=f"{query} 상품", price=1000)]
 
@@ -187,3 +187,31 @@ def test_reports_progress_through_tool_calls(tmp_path, monkeypatch):
         "재료 가격 조회 중 (1/1 · 김치)",
         "답변 작성 중",
     ]
+
+
+class _SizedPriceClient:
+    def search(self, query: str) -> list[ShoppingItem]:
+        return [
+            ShoppingItem(title=f"{query} 10kg", price=9000),
+            ShoppingItem(title=f"{query} 500g", price=3000),
+        ]
+
+
+def test_ui_price_basis_is_used_unless_the_model_overrides_it(tmp_path, monkeypatch):
+    def run(tool_args, **kwargs):
+        fake_chat, calls = _scripted_chat(
+            [fake_tool_call_response("estimate_ingredient_cost", tool_args), fake_text_response("답")]
+        )
+        monkeypatch.setattr(pipeline, "chat", fake_chat)
+        conn = get_connection(str(tmp_path / f"{len(kwargs)}{len(tool_args)}.db"))
+        upsert_recipes(conn, [_recipe()])
+        pipeline.handle_message("재료비", _StubSearcher([_recipe()]), _SizedPriceClient(), conn, **kwargs)
+        return _tool_results(calls[1])[0]
+
+    ui_default = run({"recipe_name": "김치찌개"}, price_basis="min_spend")
+    overridden = run({"recipe_name": "김치찌개", "price_basis": "unit_price"}, price_basis="min_spend")
+
+    assert "가격 기준: 최소 지출" in ui_default
+    assert "김치 500g" in ui_default
+    assert "가격 기준: 단위가격 우선" in overridden
+    assert "김치 10kg" in overridden

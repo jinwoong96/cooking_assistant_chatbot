@@ -52,3 +52,12 @@ def test_matches_weight_immediately_followed_by_korean_particle():
 
 def test_does_not_match_unit_embedded_in_a_longer_latin_word():
     assert parse_quantity("50grams of flour") is None
+
+
+def test_package_quantity_takes_the_largest_amount():
+    from cooking_assistant_chatbot.pricing.unit_parser import parse_package_quantity
+
+    assert parse_package_quantity("수미감자 소 (조림용 40g 미만) 10kg").value == 10000
+    assert parse_package_quantity("올리브오일 140g (10g x 14포)").value == 140
+    assert parse_package_quantity("진간장 1.7L + 500ml").value == 1700
+    assert parse_package_quantity("계란 30구") is None

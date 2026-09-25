@@ -15,28 +15,6 @@ _DEFAULT_USER_AGENT = (
 )
 
 
-RELEVANCE_POOL = 5
-"""Only the top results in enuri's own (relevance) order are price
-candidates. Taking the cheapest of all ~40 results used to pick unrelated
-cheap listings from far down the page: 29 of 76 cached matches didn't even
-name the ingredient ("밥" -> a latte powder, "고춧가루" -> apple vinegar,
-"청고추" -> packing string), while enuri's top results were right (햇반,
-real 고춧가루)."""
-
-
-def pick_relevant_cheapest(
-    items: list["ShoppingItem"], query: str, pool: int = RELEVANCE_POOL
-) -> list["ShoppingItem"]:
-    """From results in relevance order, keep the top `pool`, prefer the ones
-    whose title actually names the query (spaces ignored), and sort those
-    cheapest-first. Falls back to the whole pool when none name it, since
-    spelling variants are common (달걀 -> "계란 30구", 케첩 -> "케찹")."""
-    top = items[:pool]
-    key = "".join(query.split())
-    naming = [i for i in top if key and key in "".join(i.title.split())]
-    return sorted(naming or top, key=lambda i: i.price)
-
-
 class EnuriScrapeError(RuntimeError):
     """Raised when the expected JSON-LD product list can't be found/parsed."""
 
@@ -88,7 +66,9 @@ class EnuriClient:
                 time.sleep(remaining)
         self._last_request_at = time.monotonic()
 
-    def search_cheapest(self, query: str, limit: int = 5) -> list[ShoppingItem]:
+    def search(self, query: str) -> list[ShoppingItem]:
+        """All priced results, in enuri's own relevance order. Which one to
+        price an ingredient at is `pricing.selection.choose_item`'s job."""
         self._throttle()
         response = self._http.get(BASE_URL, params={"keyword": query})
         response.raise_for_status()
@@ -117,7 +97,7 @@ class EnuriClient:
                 )
             )
 
-        return pick_relevant_cheapest(items, query)[:limit]
+        return items
 
     def close(self) -> None:
         self._http.close()
