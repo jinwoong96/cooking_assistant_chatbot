@@ -100,3 +100,15 @@ def test_strips_multi_word_colon_label():
     raw = "치커리 샐러드 : 치커리\n올리브마늘 드레싱 : 올리브유"
 
     assert _names(raw) == ["치커리", "올리브유"]
+
+
+def test_splits_unicode_fraction_quantity_off_the_name():
+    result = parse_ingredients("게살(½컵), 우유 ⅔컵")
+
+    assert [(i.name, i.quantity_text) for i in result] == [("게살", "(½컵)"), ("우유", "⅔컵")]
+
+
+def test_drops_cookware_listed_as_an_ingredient():
+    result = parse_ingredients("뚝배기, 달걀 3개, 꼬치, 꼬치어묵 2개")
+
+    assert [i.name for i in result] == ["달걀", "꼬치어묵"]

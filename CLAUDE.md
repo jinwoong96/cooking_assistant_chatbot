@@ -117,6 +117,23 @@ Stack decisions:
   Results are cached in SQLite (`price_cache` table, 24h TTL, see
   `pricing/cache.py`) so repeat lookups don't re-hit the site. The client
   self-throttles to >=1 req/sec per price.enuri.com's robots.txt Crawl-delay.
+  **Product choice is relevance-first.** `pick_relevant_cheapest` works
+  like this:
+  - Take only enuri's top 5 results, in enuri's own relevance order.
+  - Among those, prefer titles that contain the ingredient name, ignoring
+    spaces.
+  - Return the cheapest of that set. If no title contains the name, fall
+    back to the cheapest of the top 5, since spelling variants are common
+    (달걀 -> "계란", 케첩 -> "케찹").
+
+  Why: the old logic took the cheapest of all ~40 results. In the price
+  cache, 29 of 76 matches didn't even name the ingredient, while enuri's top
+  results were correct:
+  - 밥 matched a latte powder (should be 햇반).
+  - 고춧가루 matched apple vinegar.
+  - 청고추 matched packing string.
+
+  The price cache was cleared once after this change.
   All other options were tried and ruled out first, in this order — don't
   re-research from scratch, revisit only if 에누리 itself becomes a problem
   (e.g. starts blocking or its markup changes in a way that breaks scraping):
@@ -174,7 +191,14 @@ name like "새우 두부 계란찜" (spaced) vs. the ingredients_raw first line
 match, letting the glued name slip in as a bogus "ingredient" that could
 spuriously match unrelated searches (e.g. it contains both "두부" and
 "계란" as substrings). Fixed by comparing with whitespace stripped
-(`_normalize_spacing`). Affected 3/1301 recipes — rebuild the ingredient
+(`_normalize_spacing`). The parser also now:
+- treats unicode fractions (½⅓⅔¼¾…) as quantity starts. "게살(½컵)" used to
+  keep its amount in the name; 25 names in the DB were affected.
+- drops exact-match cookware names (`_COOKWARE`: 뚝배기, 꼬치, 랩…). The
+  crawled recipes sometimes list them, and a 2,100원 pot once got priced into
+  a 계란찜.
+
+The spacing fix affected 3/1301 recipes — rebuild the ingredient
 index after pulling this fix.
 
 **Resolved**: LLM-based correction for ambiguous ingredient names.

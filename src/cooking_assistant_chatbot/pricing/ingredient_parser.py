@@ -24,7 +24,38 @@ _LABEL_WORDS = {
     "소스재료",
 }
 
-_DIGIT_RE = re.compile(r"\d")
+# Cookware that some recipes (mostly the 만개의레시피 crawl) list alongside
+# ingredients. Priced as groceries, "뚝배기" added a 2,100원 pot to a 계란찜.
+# Exact-name matches only, so "꼬치어묵" etc. are unaffected.
+_COOKWARE = {
+    "뚝배기",
+    "냄비",
+    "프라이팬",
+    "팬",
+    "웍",
+    "그릇",
+    "볼",
+    "전자레인지",
+    "에어프라이어",
+    "오븐",
+    "찜기",
+    "랩",
+    "호일",
+    "쿠킹호일",
+    "종이호일",
+    "키친타월",
+    "이쑤시개",
+    "꼬치",
+    "꼬치용 꼬치",
+    "나무젓가락",
+    "종이컵",
+    "지퍼백",
+    "위생장갑",
+}
+
+# Unicode vulgar fractions count as the start of a quantity too: without
+# them "게살(½컵)" kept its amount glued onto the name (25 names in the DB).
+_DIGIT_RE = re.compile(r"[\d½⅓⅔¼¾⅛⅜⅝⅞]")
 _LEADING_BRACKET_RE = re.compile(r"^\[[^\]]*\]\s*")
 _LEADING_LABEL_RE = re.compile(r"^재료\s*")
 _LINE_LABEL_RE = re.compile(r"^([가-힣A-Za-z0-9][가-힣A-Za-z0-9 ]{0,14})\s*[:：]\s*(.+)$")
@@ -112,7 +143,7 @@ def parse_ingredients(ingredients_raw: str, recipe_name: str = "") -> list[Parse
                 continue
             token = _strip_leading_label_word(token)
             name, quantity_text = _split_name_and_quantity(token)
-            if not name:
+            if not name or name in _COOKWARE:
                 continue
             results.append(ParsedIngredient(name=name, quantity_text=quantity_text))
     return results
