@@ -18,6 +18,7 @@ def test_chat_defaults_to_configured_ollama_model_and_api_base(monkeypatch):
     assert captured["model"] == "ollama_chat/qwen3:14b"
     assert captured["api_base"] == "http://localhost:11434"
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    assert captured["use_mmap"] is False
 
 
 def test_chat_omits_api_base_for_non_ollama_model(monkeypatch):
@@ -28,6 +29,7 @@ def test_chat_omits_api_base_for_non_ollama_model(monkeypatch):
 
     assert captured["model"] == "claude-3-5-sonnet-latest"
     assert captured["api_base"] is None
+    assert "use_mmap" not in captured
 
 
 def test_chat_passes_tools_through(monkeypatch):

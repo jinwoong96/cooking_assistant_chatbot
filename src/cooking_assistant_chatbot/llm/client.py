@@ -23,7 +23,14 @@ def chat(
     endpoints via API key.
     """
     target_model = model or settings.llm_model
-    api_base = settings.ollama_base_url if target_model.startswith("ollama") else None
+    is_ollama = target_model.startswith("ollama")
+    api_base = settings.ollama_base_url if is_ollama else None
+    if is_ollama:
+        # Ollama's default mmap load kept the whole model file resident in
+        # system RAM (~9GB working set for qwen3:14b) even with every layer
+        # on the GPU. Measured here: RAM free 4.1GB -> 12.5GB with mmap off,
+        # same speed. Lower RAM got long local test runs killed.
+        kwargs.setdefault("use_mmap", False)
 
     return litellm.completion(
         model=target_model,
