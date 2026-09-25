@@ -103,3 +103,36 @@ def test_throttle_waits_at_least_min_interval(monkeypatch):
 
     assert len(sleeps) == 1
     assert sleeps[0] == pytest.approx(0.8)
+
+
+def _item(title: str, price: int):
+    from cooking_assistant_chatbot.pricing.enuri_client import ShoppingItem
+
+    return ShoppingItem(title=title, price=price)
+
+
+def test_pick_relevant_cheapest_ignores_cheap_results_outside_the_top_pool():
+    from cooking_assistant_chatbot.pricing.enuri_client import pick_relevant_cheapest
+
+    items = [_item(f"햇반 백미 210g {i}", 10000 + i) for i in range(5)]
+    items.append(_item("치즈크림 라떼 파우더", 500))  # cheap but far down the list
+
+    picked = pick_relevant_cheapest(items, "밥")
+
+    assert picked[0].title == "햇반 백미 210g 0"
+
+
+def test_pick_relevant_cheapest_prefers_titles_naming_the_query():
+    from cooking_assistant_chatbot.pricing.enuri_client import pick_relevant_cheapest
+
+    items = [_item("파프리카 피망 5kg", 44890), _item("장난감 계산대", 30000), _item("피망 2kg", 18890)]
+
+    assert [i.title for i in pick_relevant_cheapest(items, "피망")] == ["피망 2kg", "파프리카 피망 5kg"]
+
+
+def test_pick_relevant_cheapest_falls_back_to_pool_for_spelling_variants():
+    from cooking_assistant_chatbot.pricing.enuri_client import pick_relevant_cheapest
+
+    items = [_item("유정란 60구", 27960), _item("계란 특란 30구", 18660)]
+
+    assert pick_relevant_cheapest(items, "달걀")[0].title == "계란 특란 30구"
