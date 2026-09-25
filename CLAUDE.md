@@ -44,6 +44,37 @@ Design notes:
   오므라이스's 697원 read as the whole dish's cost.
 - General knowledge questions (e.g. substitutions) are answered with no tool
   call.
+- **Ungrounded dish guard** (`pipeline.is_grounded`): a recipe-name tool
+  call only runs if at least half of the name's character bigrams appear
+  somewhere in the conversation — the current message, history, or this
+  turn's earlier tool results.
+  - Why: in a brand-new chat, "그거 칼로리는?" made qwen3 call
+    get_nutrition("김치찌개") 3 of 4 times. That happened even after a
+    prompt rule against guessing, and after removing the '김치찌개' example
+    from the tool description.
+  - If the guard rejects a call, the model gets a "don't guess, ask which
+    dish" result instead. Re-tested: it asked 4/4.
+
+**Chat sessions** (`data/chat_store.py`, sidebar in `app.py`): ChatGPT-style
+separate chats.
+- Stored in SQLite (`conversations`, `conversation_messages`), so they
+  survive restarts and every device (PC, phone via Tailscale) sees the same
+  list.
+- **Context isolation:** `run_turn` builds the agent's history from the
+  saved conversation by id, never from what the browser is showing.
+- A chat is created lazily on its first message, titled with that message
+  (trimmed, no LLM call).
+- The sidebar is locked during a turn, so a reply can't land in a chat the
+  user switched to mid-turn.
+- A failed turn now shows an error reply instead of leaving the UI stuck.
+- Chose this over Gradio's `ChatInterface(save_history=True)`, which stores
+  chats in browser localStorage (per device, not shared) and would replace
+  the custom Blocks layout (voice controls, price basis).
+- Verified in the browser:
+  - "그거 칼로리는?" answered from each chat's own context: 된장찌개 in
+    the 된장찌개 chat, nothing carried into a new chat.
+  - Switching chats restores their history.
+  - Chats persist across reload, and delete works.
 
 Stack decisions:
 - Backend: Python (FastAPI)

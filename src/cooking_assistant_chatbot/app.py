@@ -8,6 +8,7 @@ import gradio as gr
 from .agent.pipeline import handle_message
 from .config import settings
 from .progress import run_with_progress
+from .data import chat_store
 from .data.db import get_connection
 from .pricing.enuri_client import EnuriClient
 from .pricing.selection import DEFAULT_PRICE_BASIS, PRICE_BASIS_LABELS
@@ -46,6 +47,14 @@ def _plain_history(history: list[dict]) -> list[dict]:
     return plain
 
 
+def _conversation_choices(conn) -> list[tuple[str, int]]:
+    """Sidebar radio choices: (title, id), most recently used first."""
+    return [(c.title, c.id) for c in chat_store.list_conversations(conn)]
+
+
+_ERROR_REPLY = "죄송해요, 답변을 만드는 중에 오류가 났어요. 다시 한 번 물어봐주실래요?"
+
+
 def build_app() -> gr.Blocks:
     """Wire up the shared backend resources once and return a Gradio app.
 
@@ -67,53 +76,105 @@ def build_app() -> gr.Blocks:
     devices = list_input_devices()
     device_labels = [d.label for d in devices]
 
-    def run_turn(message: str, history: list, tts_on: bool, basis_label: str):
+    def _sidebar(conv_id: int | None, interactive: bool):
+        return (
+            gr.update(
+                choices=_conversation_choices(conn), value=conv_id, interactive=interactive
+            ),
+            gr.update(interactive=interactive),
+            gr.update(interactive=interactive),
+        )
+
+    def run_turn(message: str, conv_id: int | None, tts_on: bool, basis_label: str):
+        """One chat turn in conversation `conv_id` (None = a new chat, created
+        on its first message). History for the agent comes from the saved
+        conversation, not from what the browser is showing, so separate
+        chats never share context. The sidebar is locked for the duration so
+        the reply can't land in a chat the user switched to mid-turn."""
         message = (message or "").strip()
         if not message:
-            yield gr.skip(), gr.skip(), gr.skip()
+            yield (gr.skip(),) * 7
             return
-        history = [*history, {"role": "user", "content": message}]
+        if conv_id is None:
+            conv_id = chat_store.create_conversation(
+                conn, chat_store.title_from_message(message)
+            )
+        prior = chat_store.get_messages(conn, conv_id)
+        user_message = {"role": "user", "content": message}
+        chat_store.append_messages(conn, conv_id, [user_message])
+        shown = [*prior, user_message]
         started = time.monotonic()
-        yield [*history, _progress_message("요청 이해하는 중", 0)], None, ""
+        keep = (gr.skip(),) * 4
+        yield (
+            [*shown, _progress_message("요청 이해하는 중", 0)], None, "", conv_id,
+            *_sidebar(conv_id, interactive=False),
+        )
         voice.begin_turn()
         speech_seconds = 0.0
         try:
-            prior = _plain_history(history[:-1])
             work = run_with_progress(
                 lambda report: handle_message(
                     message,
                     searcher,
                     price_client,
                     conn,
-                    history=prior,
+                    history=_plain_history(prior),
                     on_progress=report,
                     price_basis=_BASIS_BY_LABEL.get(basis_label, DEFAULT_PRICE_BASIS),
                 )
             )
+            reply = None
             while True:
                 try:
                     status = next(work)
                 except StopIteration as done:
                     reply = done.value
                     break
+                except Exception:
+                    # Keep the turn (and the sidebar unlock below) going
+                    # instead of leaving the UI stuck mid-turn.
+                    break
                 elapsed = time.monotonic() - started
-                yield [*history, _progress_message(status, elapsed)], gr.skip(), gr.skip()
+                yield ([*shown, _progress_message(status, elapsed)], gr.skip(), gr.skip(), *keep)
 
+            text = reply.text if reply is not None else _ERROR_REPLY
+            chat_store.append_messages(conn, conv_id, [{"role": "assistant", "content": text}])
             audio = None
-            if tts_on:
+            if tts_on and reply is not None:
                 elapsed = time.monotonic() - started
-                yield [*history, _progress_message("음성 만드는 중", elapsed)], gr.skip(), gr.skip()
+                yield ([*shown, _progress_message("음성 만드는 중", elapsed)], gr.skip(), gr.skip(), *keep)
                 audio, speech_seconds = voice.speak(reply.speech)
-            yield [*history, {"role": "assistant", "content": reply.text}], audio, ""
+            yield (
+                [*shown, {"role": "assistant", "content": text}], audio, "", conv_id,
+                *_sidebar(conv_id, interactive=True),
+            )
         finally:
             voice.end_turn(speech_seconds)
 
-    def poll_voice(history: list, tts_on: bool, basis_label: str):
+    def poll_voice(conv_id: int | None, tts_on: bool, basis_label: str):
         text = None if voice.is_muted() else voice.pop_text()
         if not text:
-            yield gr.skip(), gr.skip(), gr.skip()
+            yield (gr.skip(),) * 7
             return
-        yield from run_turn(text, history, tts_on, basis_label)
+        yield from run_turn(text, conv_id, tts_on, basis_label)
+
+    def open_conversation(conv_id: int | None):
+        if conv_id is None:
+            return [], None
+        return chat_store.get_messages(conn, conv_id), conv_id
+
+    def new_conversation():
+        # Created lazily on the first message, so an unused "new chat"
+        # doesn't leave an empty entry behind.
+        return [], None, gr.update(choices=_conversation_choices(conn), value=None)
+
+    def delete_current(conv_id: int | None):
+        if conv_id is not None:
+            chat_store.delete_conversation(conn, conv_id)
+        return new_conversation()
+
+    def refresh_sidebar(conv_id: int | None):
+        return gr.update(choices=_conversation_choices(conn), value=conv_id)
 
     def on_source_change(source: str):
         if source != PC_MIC and voice.pc_mic.running:
@@ -143,6 +204,11 @@ def build_app() -> gr.Blocks:
             voice.preload_tts()
 
     with gr.Blocks(title="요리 챗봇") as app:
+        conv_id = gr.State(None)
+        with gr.Sidebar(open=True):
+            new_chat = gr.Button("＋ 새 채팅", variant="primary")
+            conv_list = gr.Radio(choices=[], value=None, label="채팅 목록")
+            delete_chat = gr.Button("🗑 이 채팅 삭제", size="sm")
         gr.Markdown("# 요리 챗봇\n레시피 추천·만드는 법, 영양성분, 재료비 계산을 물어보세요.")
         chatbot = gr.Chatbot(height=520)
         with gr.Row():
@@ -187,15 +253,22 @@ def build_app() -> gr.Blocks:
             voice_status = gr.Markdown("")
             tts_audio = gr.Audio(label="음성 답변", autoplay=True, interactive=False)
 
-        turn_outputs = [chatbot, tts_audio, msg]
+        turn_outputs = [chatbot, tts_audio, msg, conv_id, conv_list, new_chat, delete_chat]
         turn_opts = dict(concurrency_id="chat_turn", concurrency_limit=1)
-        turn_inputs = [msg, chatbot, tts_on, price_basis]
+        turn_inputs = [msg, conv_id, tts_on, price_basis]
         msg.submit(run_turn, turn_inputs, turn_outputs, **turn_opts)
         send.click(run_turn, turn_inputs, turn_outputs, **turn_opts)
 
         gr.Timer(_VOICE_POLL_SEC).tick(
-            poll_voice, [chatbot, tts_on, price_basis], turn_outputs, trigger_mode="once", **turn_opts
+            poll_voice, [conv_id, tts_on, price_basis], turn_outputs, trigger_mode="once", **turn_opts
         )
+
+        # .input, not .change: fires only on the user's own clicks, not when
+        # a turn updates the radio's value/choices.
+        conv_list.input(open_conversation, conv_list, [chatbot, conv_id])
+        new_chat.click(new_conversation, None, [chatbot, conv_id, conv_list])
+        delete_chat.click(delete_current, conv_id, [chatbot, conv_id, conv_list])
+        app.load(refresh_sidebar, conv_id, conv_list)
         browser_mic.start_recording(voice.preload_stt)
         browser_mic.stream(
             lambda chunk: voice.feed_browser_audio(*chunk) if chunk is not None else None,

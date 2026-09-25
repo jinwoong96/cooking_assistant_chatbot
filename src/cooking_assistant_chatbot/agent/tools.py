@@ -55,7 +55,12 @@ def _recipe_name_param(description: str) -> dict:
     }
 
 
-_RECIPE_NAME_DESC = "메뉴/레시피 이름 (예: '김치찌개'). 이전 대화에서 나온 레시피면 그 이름을 그대로 쓴다."
+# No concrete dish as an example here: with "(예: '김치찌개')" the model
+# filled in 김치찌개 for "그거 칼로리는?" in a brand-new chat.
+_RECIPE_NAME_DESC = (
+    "사용자가 말한 메뉴/레시피 이름 그대로. 이전 대화에서 나온 레시피면 그 이름을 그대로 쓴다. "
+    "사용자가 메뉴를 말하지 않았고 이전 대화에도 없으면 이 도구를 부르지 않는다."
+)
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -151,6 +156,11 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
 ]
+
+
+RECIPE_NAME_TOOLS = frozenset({"get_recipe", "get_nutrition", "estimate_ingredient_cost"})
+"""Tools that take a `recipe_name` — the pipeline checks the name was
+actually mentioned before running them (`pipeline.is_grounded`)."""
 
 
 def _resolve_recipe(name: str, ctx: ToolContext) -> Recipe | None:
@@ -283,7 +293,7 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         ctx.report(f"{', '.join(ingredients)} 들어간 레시피 찾는 중")
         return _format_recipe_list(find_recipes_by_ingredients(ctx.conn, ingredients, limit=5))
 
-    if name in ("get_recipe", "get_nutrition", "estimate_ingredient_cost"):
+    if name in RECIPE_NAME_TOOLS:
         requested = args.get("recipe_name", "")
         ctx.report(f"'{requested}' 레시피 찾는 중")
         recipe = _resolve_recipe(requested, ctx)
