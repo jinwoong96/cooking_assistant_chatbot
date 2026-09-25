@@ -177,3 +177,15 @@ def test_estimate_recipe_price_without_correct_name_behaves_as_before(tmp_path):
 
     assert client.queries == ["얇게 썬 돼지고기"]
     assert estimate.ingredient_prices[0].cheapest_item is None
+
+
+def test_estimate_recipe_price_reports_progress_per_ingredient(tmp_path):
+    recipe = Recipe(rcp_seq="1", name="김치찌개", ingredients_raw="김치 200g, 두부 100g")
+    client = _StubClient({"김치": 3000, "두부": 1500})
+    calls = []
+
+    estimate_recipe_price(
+        recipe, client, _conn(tmp_path), on_progress=lambda *args: calls.append(args)
+    )
+
+    assert calls == [(1, 2, "김치"), (2, 2, "두부")]

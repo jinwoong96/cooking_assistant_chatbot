@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import gradio as gr
 
 from .agent.pipeline import handle_message
 from .config import settings
+from .progress import run_with_progress
 from .data.db import get_connection
 from .pricing.enuri_client import EnuriClient
 from .rag.embeddings import BGEEmbeddingFunction
@@ -16,6 +20,12 @@ from .voice.tts import Speaker
 BROWSER_MIC = "브라우저 마이크"
 PC_MIC = "PC 마이크"
 _VOICE_POLL_SEC = 0.5
+
+
+def _progress_message(status: str, elapsed_sec: float) -> dict:
+    """Placeholder assistant bubble shown while a reply is being built;
+    replaced by the real reply when it's done."""
+    return {"role": "assistant", "content": f"⏳ {status or '처리 중'} · {int(elapsed_sec)}초"}
 
 
 def _plain_history(history: list[dict]) -> list[dict]:
@@ -40,6 +50,9 @@ def build_app() -> gr.Blocks:
     """
     conn = get_connection(settings.db_path)
     embedding_function = BGEEmbeddingFunction(settings.embedding_model_name)
+    # Load it now (in the background, so the UI still comes up immediately)
+    # instead of on the first search, which cost ~40s of the first reply.
+    threading.Thread(target=embedding_function.load, daemon=True).start()
     searcher = RecipeSearcher(settings.chroma_db_path, settings.db_path, embedding_function)
     price_client = EnuriClient()
     voice = VoiceController(
@@ -56,18 +69,32 @@ def build_app() -> gr.Blocks:
             yield gr.skip(), gr.skip(), gr.skip()
             return
         history = [*history, {"role": "user", "content": message}]
-        yield history, None, ""
+        started = time.monotonic()
+        yield [*history, _progress_message("요청 이해하는 중", 0)], None, ""
         voice.begin_turn()
         speech_seconds = 0.0
         try:
-            reply = handle_message(
-                message, searcher, price_client, conn, history=_plain_history(history[:-1])
+            prior = _plain_history(history[:-1])
+            work = run_with_progress(
+                lambda report: handle_message(
+                    message, searcher, price_client, conn, history=prior, on_progress=report
+                )
             )
-            history = [*history, {"role": "assistant", "content": reply.text}]
+            while True:
+                try:
+                    status = next(work)
+                except StopIteration as done:
+                    reply = done.value
+                    break
+                elapsed = time.monotonic() - started
+                yield [*history, _progress_message(status, elapsed)], gr.skip(), gr.skip()
+
             audio = None
             if tts_on:
+                elapsed = time.monotonic() - started
+                yield [*history, _progress_message("음성 만드는 중", elapsed)], gr.skip(), gr.skip()
                 audio, speech_seconds = voice.speak(reply.speech)
-            yield history, audio, ""
+            yield [*history, {"role": "assistant", "content": reply.text}], audio, ""
         finally:
             voice.end_turn(speech_seconds)
 

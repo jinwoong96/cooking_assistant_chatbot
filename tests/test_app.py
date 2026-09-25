@@ -25,3 +25,11 @@ def test_plain_history_flattens_gradio_messages_for_the_llm():
         {"role": "user", "content": "두부 요리 뭐 있어?"},
         {"role": "assistant", "content": "두부조림 어때요?"},
     ]
+
+
+def test_progress_message_shows_status_and_whole_seconds():
+    assert app._progress_message("재료 가격 조회 중 (3/18 · 두부)", 42.7) == {
+        "role": "assistant",
+        "content": "⏳ 재료 가격 조회 중 (3/18 · 두부) · 42초",
+    }
+    assert app._progress_message("", 0)["content"] == "⏳ 처리 중 · 0초"
