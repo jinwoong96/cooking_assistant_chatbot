@@ -92,6 +92,7 @@ def test_cost_tool_prices_ingredients_and_grounds_reply(tmp_path, monkeypatch):
             fake_tool_call_response("estimate_ingredient_cost", {"recipe_name": "김치찌개"}),
             fake_text_response("재료비는 1,000원이에요."),
         ],
+        "김치찌개 재료비 얼마야?",
     )
 
     assert price_client.queries == ["김치"]
@@ -178,6 +179,7 @@ def test_reports_progress_through_tool_calls(tmp_path, monkeypatch):
             fake_tool_call_response("estimate_ingredient_cost", {"recipe_name": "김치찌개"}),
             fake_text_response("답변"),
         ],
+        "김치찌개 재료비",
         on_progress=statuses.append,
     )
 
@@ -205,7 +207,7 @@ def test_ui_price_basis_is_used_unless_the_model_overrides_it(tmp_path, monkeypa
         monkeypatch.setattr(pipeline, "chat", fake_chat)
         conn = get_connection(str(tmp_path / f"{len(kwargs)}{len(tool_args)}.db"))
         upsert_recipes(conn, [_recipe()])
-        pipeline.handle_message("재료비", _StubSearcher([_recipe()]), _SizedPriceClient(), conn, **kwargs)
+        pipeline.handle_message("김치찌개 재료비", _StubSearcher([_recipe()]), _SizedPriceClient(), conn, **kwargs)
         return _tool_results(calls[1])[0]
 
     ui_default = run({"recipe_name": "김치찌개"}, price_basis="min_spend")
@@ -215,3 +217,46 @@ def test_ui_price_basis_is_used_unless_the_model_overrides_it(tmp_path, monkeypa
     assert "김치 500g" in ui_default
     assert "가격 기준: 단위가격 우선" in overridden
     assert "김치 10kg" in overridden
+
+
+def test_recipe_tool_is_not_run_for_a_dish_nobody_mentioned(tmp_path, monkeypatch):
+    reply, calls, price_client = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response("estimate_ingredient_cost", {"recipe_name": "김치찌개"}),
+            fake_text_response("어떤 메뉴 말씀이세요?"),
+        ],
+        "그거 재료비는?",
+    )
+
+    assert price_client.queries == []
+    assert "추측하지 말고" in _tool_results(calls[1])[0]
+
+
+def test_recipe_named_earlier_in_history_is_grounded(tmp_path, monkeypatch):
+    history = [
+        {"role": "user", "content": "된장 두부찌개 알려줘"},
+        {"role": "assistant", "content": "된장 두부찌개는 이렇게 만들어요."},
+    ]
+
+    _, calls, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response("get_nutrition", {"recipe_name": "김치찌개"}),
+            fake_text_response("답"),
+        ],
+        "그거 칼로리는?",
+        history=history,
+    )
+
+    # Shares only "찌개" with the history: not the dish that was discussed.
+    assert "추측하지 말고" in _tool_results(calls[1])[0]
+
+
+def test_is_grounded_tolerates_spacing_and_small_wording_differences():
+    assert pipeline.is_grounded("된장찌개", "된장 두부찌개 레시피예요")
+    assert pipeline.is_grounded("쉬운 계란찜", "- 맛있는 계란찜 만드는법 쉬운 계란찜 레시피")
+    assert not pipeline.is_grounded("김치찌개", "그거 칼로리는?")
+    assert not pipeline.is_grounded("", "아무 말")

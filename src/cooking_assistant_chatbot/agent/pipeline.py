@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Callable
@@ -9,7 +10,7 @@ from ..pricing.enuri_client import EnuriClient
 from ..pricing.selection import DEFAULT_PRICE_BASIS, PriceBasis
 from ..rag.search import RecipeSearcher
 from ..voice.tts import to_speech_text
-from .tools import TOOLS, ToolContext, run_tool
+from .tools import RECIPE_NAME_TOOLS, TOOLS, ToolContext, run_tool
 
 __all__ = ["handle_message", "Reply"]
 
@@ -32,13 +33,15 @@ _SYSTEM_PROMPT = (
     "가격 기준을 답변에 함께 밝혀라\n"
     "질문이 여러 가지를 함께 물으면 필요한 도구를 차례로 여러 번 불러도 된다. "
     "'그거', '아까 그 메뉴'처럼 이전 대화를 가리키면 이전 대화에 나온 레시피 이름을 그대로 써라. "
+    "가리키는 메뉴가 이전 대화에 없으면(새 채팅의 첫 질문 등) 메뉴를 추측해서 도구를 부르지 말고, "
+    "어떤 메뉴를 말하는지 짧게 물어봐라. "
     "재료 대체나 조리 팁처럼 일반 상식으로 충분한 질문은 도구 없이 바로 답해도 된다.\n"
     "도구 결과를 받았다면 그 데이터만 근거로 답하고, 결과에 없는 수치(가격, 칼로리, 인분 수)를 "
     "지어내지 마라. 도구 결과에 적힌 주의사항(예: 일부 재료만 계산됨)은 답변에 반영해라. "
     "검색 결과에 레시피가 여러 개 있어도, 답변에서 소개하는 레시피의 재료·조리법·가격은 그 "
     "레시피 자신의 결과에서만 가져와라. 다른 레시피의 특징(예: 다른 레시피 이름에 있는 "
     "'전자레인지')을 섞지 말고, 조리법 특징을 말하려면 get_recipe로 확인한 내용만 말해라. "
-    "사용자에게 되묻지 말고 완결된 답을 해라."
+    "그 경우가 아니면 사용자에게 되묻지 말고 완결된 답을 해라."
 )
 
 
@@ -48,6 +51,47 @@ class Reply:
     """Markdown shown in the chat window."""
     speech: str
     """The same reply as plain text for TTS (markdown/emoji stripped)."""
+
+
+_UNGROUNDED_RECIPE_RESULT = (
+    "사용자가 어떤 메뉴를 말하는지 대화 어디에도 나오지 않음. 메뉴를 추측하지 말고, "
+    "어떤 메뉴를 말하는지 짧게 물어볼 것."
+)
+
+
+def _bigrams(text: str) -> set[str]:
+    text = "".join(text.split())
+    return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+def is_grounded(recipe_name: str, conversation_text: str) -> bool:
+    """Whether the dish the model asked a tool about was actually mentioned.
+
+    qwen3:14b answered "그거 칼로리는?" in a brand-new chat by calling
+    get_nutrition("김치찌개") 3 of 4 times, even after the prompt said not to
+    guess — so this is checked in code. Loose on purpose: at least half the
+    name's character bigrams must appear somewhere in the conversation, so
+    "된장찌개" still counts as mentioned by "된장 두부찌개" (된장, 찌개).
+    """
+    name_grams = _bigrams(recipe_name)
+    if not name_grams:
+        return False
+    context_grams = _bigrams(conversation_text)
+    return len(name_grams & context_grams) * 2 >= len(name_grams)
+
+
+def _run_tool_call(call, ctx: ToolContext, messages: list[dict]) -> str:
+    if call.function.name in RECIPE_NAME_TOOLS:
+        try:
+            recipe_name = json.loads(call.function.arguments or "{}").get("recipe_name", "")
+        except json.JSONDecodeError:
+            recipe_name = ""
+        conversation_text = " ".join(
+            m["content"] for m in messages if m.get("role") != "system" and m.get("content")
+        )
+        if not is_grounded(recipe_name, conversation_text):
+            return _UNGROUNDED_RECIPE_RESULT
+    return run_tool(call.function.name, call.function.arguments, ctx)
 
 
 def _assistant_tool_message(message) -> dict:
@@ -121,7 +165,7 @@ def handle_message(
                 {
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": run_tool(call.function.name, call.function.arguments, ctx),
+                    "content": _run_tool_call(call, ctx, messages),
                 }
             )
         report("답변 작성 중")
