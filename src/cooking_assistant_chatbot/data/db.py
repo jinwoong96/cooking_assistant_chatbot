@@ -7,6 +7,7 @@ from pathlib import Path
 from .chat_store import SCHEMA as CHAT_SCHEMA
 from .chat_store import migrate as migrate_chat_store
 from .models import Recipe
+from .user_recipes import SCHEMA as USER_RECIPES_SCHEMA
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS recipes (
@@ -52,7 +53,7 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA + CHAT_SCHEMA)
+    conn.executescript(SCHEMA + CHAT_SCHEMA + USER_RECIPES_SCHEMA)
     migrate_chat_store(conn)
     return conn
 

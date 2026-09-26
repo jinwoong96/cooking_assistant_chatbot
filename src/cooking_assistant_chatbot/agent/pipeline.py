@@ -10,6 +10,7 @@ from ..pricing.enuri_client import EnuriClient
 from ..pricing.selection import DEFAULT_PRICE_BASIS, PriceBasis
 from ..rag.search import RecipeSearcher
 from ..voice.tts import to_speech_text
+from ..data.user_recipes import RecipeDraft
 from .tools import RECIPE_NAME_TOOLS, TOOLS, ToolContext, run_tool
 
 __all__ = ["handle_message", "Reply"]
@@ -29,6 +30,8 @@ _SYSTEM_PROMPT = (
     "- 추천·탐색 질문이면 search_recipes (가진 재료 목록이 있으면 search_recipes_by_ingredients)\n"
     "- 만드는 법·재료를 물으면 get_recipe\n"
     "- 칼로리·영양을 물으면 get_nutrition\n"
+    "- 자기 레시피를 게시판에 등록하고 싶다며 내용을 알려주면 prepare_recipe_registration "
+    "(폼에 채우기만 하고, 저장은 사용자가 확인 후 직접 한다)\n"
     "- 가격·비용·재료비를 물으면 estimate_ingredient_cost (느리니 물어봤을 때만). 결과에 적힌 "
     "가격 기준을 답변에 함께 밝혀라\n"
     "질문이 여러 가지를 함께 물으면 필요한 도구를 차례로 여러 번 불러도 된다. "
@@ -54,6 +57,9 @@ class Reply:
     recipe_seq: str | None = None
     """The recipe this reply showed ingredients for, if any — the chat
     remembers it so cooking mode can start from it."""
+    recipe_draft: RecipeDraft | None = None
+    """A user recipe the model drafted from the chat, for the registration
+    form (see tools.prepare_recipe_registration)."""
 
 
 _UNGROUNDED_RECIPE_RESULT = (
@@ -161,7 +167,10 @@ def handle_message(
         if not message.tool_calls or tools is None:
             text = message.content or "죄송해요, 답변을 만들지 못했어요. 다시 한 번 물어봐주실래요?"
             return Reply(
-                text=text, speech=to_speech_text(text), recipe_seq=ctx.shown_recipe_seq
+                text=text,
+                speech=to_speech_text(text),
+                recipe_seq=ctx.shown_recipe_seq,
+                recipe_draft=ctx.recipe_draft,
             )
 
         messages.append(_assistant_tool_message(message))
