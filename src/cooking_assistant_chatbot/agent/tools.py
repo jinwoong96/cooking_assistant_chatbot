@@ -20,6 +20,7 @@ from typing import Any, Callable
 from ..data.db import get_recipe_by_name
 from ..data.ingredient_index import find_recipes_by_ingredients
 from ..data.models import Recipe
+from ..data.user_recipes import NUTRITION_FIELDS, RecipeDraft
 from ..pricing.enuri_client import EnuriClient
 from ..pricing.price_lookup import RecipePriceEstimate, estimate_recipe_price
 from ..pricing.selection import (
@@ -40,6 +41,10 @@ class ToolContext:
     report: Callable[[str], None]
     price_basis: PriceBasis = DEFAULT_PRICE_BASIS
     """The UI's default; a request can override it per call."""
+    recipe_draft: RecipeDraft | None = None
+    """Set when the user described their own recipe in chat: the app puts it
+    into the registration form for them to check and save (never saved
+    automatically)."""
     shown_recipe_seq: str | None = None
     """The last recipe whose ingredients this turn showed the user (via
     get_recipe or estimate_ingredient_cost) — what cooking mode starts from."""
@@ -65,7 +70,42 @@ _RECIPE_NAME_DESC = (
     "사용자가 메뉴를 말하지 않았고 이전 대화에도 없으면 이 도구를 부르지 않는다."
 )
 
+_PREPARE_REGISTRATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "prepare_recipe_registration",
+        "description": (
+            "사용자가 '내 레시피 등록할래'처럼 자기 레시피를 게시판에 등록하고 싶어하며 내용을 "
+            "알려줬을 때, 그 내용을 등록 양식에 맞게 정리해 등록 폼에 채운다. 저장은 사용자가 "
+            "폼에서 확인 후 직접 한다. 사용자가 말하지 않은 재료·분량·단계를 지어내지 마라."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "메뉴 이름"},
+                "servings": {"type": "integer", "description": "몇 인분인지 (말했을 때만)"},
+                "ingredients": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "재료 하나당 '재료 분량' 한 항목 (예: ['두부 1모', '간장 2큰술'])",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "조리 순서, 한 단계당 한 항목 (번호 없이)",
+                },
+                **{
+                    key: {"type": "number", "description": f"{label}({unit}) — 말했을 때만"}
+                    for key, (label, unit) in NUTRITION_FIELDS.items()
+                },
+            },
+            "required": ["name", "ingredients", "steps"],
+        },
+    },
+}
+
 TOOLS: list[dict[str, Any]] = [
+    _PREPARE_REGISTRATION_TOOL,
     {
         "type": "function",
         "function": {
@@ -285,6 +325,21 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         args = json.loads(arguments or "{}")
     except json.JSONDecodeError:
         args = {}
+
+    if name == "prepare_recipe_registration":
+        ctx.report("등록 양식 채우는 중")
+        servings = args.get("servings")
+        ctx.recipe_draft = RecipeDraft(
+            name=str(args.get("name") or ""),
+            servings=int(servings) if isinstance(servings, (int, float)) else None,
+            ingredients=[str(i) for i in args.get("ingredients") or []],
+            steps=[str(i) for i in args.get("steps") or []],
+            nutrition={k: str(args[k]) for k in NUTRITION_FIELDS if args.get(k) is not None},
+        ).cleaned()
+        return (
+            "등록 폼에 채워둠 (아직 저장 안 됨). 사용자에게 '레시피 등록' 탭에서 내용을 확인하고 "
+            "등록자 이름을 적은 뒤 저장하라고 안내할 것."
+        )
 
     if name == "search_recipes":
         query = args.get("query", "")

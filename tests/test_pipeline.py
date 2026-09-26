@@ -278,3 +278,30 @@ def test_reply_remembers_the_recipe_whose_details_were_shown(tmp_path, monkeypat
 
     assert reply.recipe_seq == "1"
     assert nutrition_only.recipe_seq is None
+
+
+def test_chat_can_draft_a_recipe_for_the_registration_form(tmp_path, monkeypatch):
+    reply, calls, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response(
+                "prepare_recipe_registration",
+                {
+                    "name": "우리집 김치볶음밥",
+                    "servings": 2,
+                    "ingredients": ["밥 2공기", "김치 1컵"],
+                    "steps": ["1. 김치를 볶는다", "밥을 넣고 볶는다"],
+                    "energy_kcal": 600,
+                },
+            ),
+            fake_text_response("레시피 등록 탭에서 확인 후 저장해주세요."),
+        ],
+        "내 김치볶음밥 레시피 등록할래. 밥 2공기, 김치 1컵...",
+    )
+
+    draft = reply.recipe_draft
+    assert draft.name == "우리집 김치볶음밥" and draft.servings == 2
+    assert draft.steps == ["김치를 볶는다", "밥을 넣고 볶는다"]
+    assert draft.nutrition == {"energy_kcal": "600"}
+    assert "저장 안 됨" in _tool_results(calls[1])[0]

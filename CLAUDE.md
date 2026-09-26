@@ -488,7 +488,7 @@ How it's wired:
     rings the alarm (`check_timer`).
   - Cooking mode always speaks, whatever the TTS checkbox says. It mutes
     the mic for the reply's duration (the same half-duplex gate as chat).
-- **Screen Wake Lock** (`_WAKE_LOCK_HEAD` script, requested on "요리 시작"
+- **Screen Wake Lock** (`_WAKE_LOCK_HEAD` script, passed to `launch(head=)`, requested on "요리 시작"
   and released on "요리 끝"; iOS Safari 16.4+):
   - Why: browsers pause a hidden page's timers, so a locked phone screen
     would stop voice commands and the timer alarm. This was found because
@@ -514,10 +514,41 @@ How it's wired:
   - Not yet checked on a real phone (wake lock, iOS audio autoplay).
     Tracked in `TODO.md`.
 
-**Deferred (user request)**: user-registered recipes. The user wants to
-add their own recipes from a template the app provides, stored with who
-registered each one. Not built yet. Cooking mode would pick these up for
-free, since it only needs a `Recipe` with `steps`.
+## Recipe board (`data/user_recipes.py`, "📖 레시피 게시판" tab)
+
+Users post their own recipes from a template and browse them board-style.
+Scope was set by the user in a grilling round, then narrowed mid-build.
+- **Kept out of search and recommendations entirely.** The user decided
+  this mid-build. Posts live in their own `user_recipes` table, not in
+  `recipes`, so no search, ingredient index, cost lookup, or index rebuild
+  can pick them up. A test asserts `get_all_recipes` stays empty after
+  posting.
+- **Author**: the "내 이름" box at the top of the board tab.
+  - It's remembered in the browser via `gr.BrowserState`. That needs a
+    fixed `secret`; the default is a random per-launch key, which made the
+    stored name unreadable after every app restart.
+  - Edit/delete is allowed only when "내 이름" matches the post's author.
+    This is a single-password personal app with no real accounts, so it
+    isn't verified identity.
+  - Delete also needs a confirm checkbox.
+- **Template** (`RecipeDraft`): name, optional servings, ingredients (one
+  "재료 분량" per line), steps (one per line), optional nutrition (5
+  numbers). `cleaned()` drops blank lines and typed "1." step numbers;
+  numbering is added when rendered.
+- **Two ways in**:
+  - The form (with a "📋 예시로 채우기" example).
+  - Chat. Describing your recipe makes the agent call
+    `prepare_recipe_registration`, which **only fills the form**. It's
+    never saved automatically. The app switches to the board tab with the
+    draft for the user to check and save. Verified with qwen3: a free-text
+    참치마요덮밥 description became name / 1인분 / 5 ingredients / 2 steps,
+    with nothing invented.
+- **Board**: newest first, filter by title or author (spaces ignored). Click
+  a post to see its rendered markdown (`user_recipes.render`).
+- **Gradio 6 gotcha found here**: `head=` on `gr.Blocks()` is ignored (it
+  moved to `launch()`), with only a warning. So cooking mode's wake-lock
+  script (#24) was never injected until it moved to `app.launch(head=...)`.
+  Verified afterwards: `window.cookWake` is defined in the page.
 
 ## Development environment
 

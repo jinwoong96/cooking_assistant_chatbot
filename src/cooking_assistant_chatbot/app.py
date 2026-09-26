@@ -10,7 +10,7 @@ from .agent.pipeline import handle_message
 from .config import settings
 from .cooking import session as cooking
 from .progress import run_with_progress
-from .data import chat_store
+from .data import chat_store, user_recipes
 from .data.db import get_connection, get_recipes_by_ids
 from .pricing.enuri_client import EnuriClient
 from .pricing.selection import DEFAULT_PRICE_BASIS, PRICE_BASIS_LABELS
@@ -232,6 +232,7 @@ def build_app() -> gr.Blocks:
             chat_store.append_messages(conn, conv, [{"role": "assistant", "content": text}])
             if reply is not None and reply.recipe_seq:
                 chat_store.set_recipe(conn, conv, reply.recipe_seq)
+            draft_update = _draft_into_form(reply.recipe_draft) if reply else {}
             audio = None
             if tts_on and reply is not None:
                 elapsed = time.monotonic() - started
@@ -241,6 +242,7 @@ def build_app() -> gr.Blocks:
                 chatbot: [*shown, {"role": "assistant", "content": text}],
                 tts_audio: audio,
                 **_sidebar(conv, interactive=True),
+                **draft_update,
             }
         finally:
             voice.end_turn(speech_seconds)
@@ -281,6 +283,132 @@ def build_app() -> gr.Blocks:
             chat_store.delete_conversation(conn, conv)
         return new_conversation()
 
+    # ---- recipe board ----
+    def _board_choices(query: str) -> list[tuple[str, int]]:
+        return [
+            (f"{r.draft.name} · {r.author} · {r.created_at[:10]}", r.id)
+            for r in user_recipes.search(conn, query or "")
+        ]
+
+    def show_board(query: str = "", status: str = "") -> dict:
+        return {
+            board_list: gr.update(choices=_board_choices(query), value=None),
+            post_group: gr.update(visible=False),
+            form_group: gr.update(visible=False),
+            form_status: status,
+            editing_id: None,
+            viewing_id: None,
+        }
+
+    def open_post(recipe_id: int | None) -> dict:
+        recipe = user_recipes.get(conn, recipe_id) if recipe_id is not None else None
+        if recipe is None:
+            return show_board()
+        return {
+            post_group: gr.update(visible=True),
+            post_view: user_recipes.render(recipe),
+            form_group: gr.update(visible=False),
+            form_status: "",
+            viewing_id: recipe.id,
+        }
+
+    def _form_values(draft) -> dict:
+        nutrition = draft.nutrition if draft else {}
+        values = {
+            form_name: draft.name if draft else "",
+            form_servings: draft.servings if draft else None,
+            form_ingredients: "\n".join(draft.ingredients) if draft else "",
+            form_steps: "\n".join(draft.steps) if draft else "",
+        }
+        for box, key in zip(form_nutrition, user_recipes.NUTRITION_FIELDS):
+            values[box] = float(nutrition[key]) if key in nutrition else None
+        return values
+
+    def _draft_into_form(draft) -> dict:
+        """After a chat turn: if the model drafted a recipe, open it in the
+        registration form on the board tab for the user to check and save."""
+        if draft is None:
+            return {}
+        return {
+            tabs: gr.Tabs(selected="board"),
+            form_group: gr.update(visible=True),
+            post_group: gr.update(visible=False),
+            form_status: "채팅 내용으로 양식을 채웠어요. 확인하고 위의 '내 이름'을 적은 뒤 **저장**을 눌러주세요.",
+            editing_id: None,
+            **_form_values(draft),
+        }
+
+    def new_post() -> dict:
+        return {
+            post_group: gr.update(visible=False),
+            form_group: gr.update(visible=True),
+            form_status: "",
+            editing_id: None,
+            **_form_values(None),
+        }
+
+    def edit_post(recipe_id: int | None, author: str) -> dict:
+        recipe = user_recipes.get(conn, recipe_id) if recipe_id is not None else None
+        if recipe is None:
+            return show_board()
+        if recipe.author != (author or "").strip():
+            return {form_status: f"'{recipe.author}'님이 등록한 레시피예요. 위의 '내 이름'이 같아야 수정할 수 있어요."}
+        return {
+            post_group: gr.update(visible=False),
+            form_group: gr.update(visible=True),
+            form_status: "",
+            editing_id: recipe.id,
+            **_form_values(recipe.draft),
+        }
+
+    def delete_post(recipe_id: int | None, author: str, confirmed: bool, query: str) -> dict:
+        if recipe_id is None:
+            return show_board(query)
+        if not confirmed:
+            return {form_status: "삭제하려면 '삭제하려면 체크'를 먼저 체크해주세요."}
+        try:
+            user_recipes.delete(conn, recipe_id, author or "")
+        except user_recipes.PermissionDenied as error:
+            return {form_status: str(error), post_delete_confirm: False}
+        return {**show_board(query, "삭제했어요."), post_delete_confirm: False}
+
+    def save_post(recipe_id, author, name, servings, ingredients, steps, *rest):
+        *nutrition_values, query = rest
+        draft = user_recipes.RecipeDraft(
+            name=name or "",
+            servings=int(servings) if servings else None,
+            ingredients=(ingredients or "").split("\n"),
+            steps=(steps or "").split("\n"),
+            nutrition={
+                key: f"{value:g}"
+                for key, value in zip(user_recipes.NUTRITION_FIELDS, nutrition_values)
+                if value is not None
+            },
+        )
+        try:
+            saved = user_recipes.save(conn, draft, author or "", recipe_id)
+        except (ValueError, user_recipes.PermissionDenied) as error:
+            return {form_status: f"⚠️ {error}"}
+        return {
+            **show_board(query, f"'{saved.draft.name}' 레시피를 {'수정' if recipe_id else '등록'}했어요."),
+            **open_post(saved.id),
+            board_list: gr.update(choices=_board_choices(query), value=saved.id),
+        }
+
+    def example_post() -> dict:
+        return _form_values(
+            user_recipes.RecipeDraft(
+                name="자취생 간장계란밥",
+                servings=1,
+                ingredients=["밥 1공기", "계란 2개", "간장 1큰술", "참기름 약간", "김가루 약간"],
+                steps=[
+                    "팬에 기름을 두르고 계란을 반숙으로 부친다.",
+                    "밥 위에 계란을 올린다.",
+                    "간장과 참기름을 두르고 김가루를 뿌려 비빈다.",
+                ],
+            )
+        )
+
     def on_source_change(source: str):
         if source != PC_MIC and voice.pc_mic.running:
             voice.pc_mic.stop()
@@ -308,83 +436,147 @@ def build_app() -> gr.Blocks:
         if enabled:
             voice.preload_tts()
 
-    with gr.Blocks(title="요리 챗봇", head=_WAKE_LOCK_HEAD) as app:
+    with gr.Blocks(title="요리 챗봇") as app:
         conv_id = gr.State(None)
         cook_state = gr.State(None)
+        editing_id = gr.State(None)
+        viewing_id = gr.State(None)
+        # The registrant's name, remembered in this browser's localStorage.
+        # BrowserState encrypts with a random per-launch key unless given a
+        # secret, so the name was unreadable after every app restart. A fixed
+        # secret is fine here: it's a display name, not a credential.
+        author_store = gr.BrowserState(
+            "", storage_key="cook_chatbot_author", secret="cook-chatbot-author-name"
+        )
         with gr.Sidebar(open=True):
             new_chat = gr.Button("＋ 새 채팅", variant="primary")
             conv_list = gr.Radio(choices=[], value=None, label="채팅 목록")
             delete_chat = gr.Button("🗑 이 채팅 삭제", size="sm")
         gr.Markdown("# 요리 챗봇\n레시피 추천·만드는 법, 영양성분, 재료비 계산을 물어보세요.")
 
-        with gr.Group(visible=False) as cook_panel:
-            cook_step = gr.Markdown()
-            cook_timer = gr.Markdown()
-            with gr.Row():
-                cook_prev = gr.Button("◀ 이전")
-                cook_repeat = gr.Button("🔁 다시")
-                cook_next = gr.Button("다음 ▶", variant="primary")
-            with gr.Row():
-                cook_timer_off = gr.Button("⏱ 타이머 끄기", size="sm")
-                cook_exit = gr.Button("요리 끝", size="sm")
+        with gr.Tabs(selected="chat") as tabs:
+            with gr.Tab("💬 채팅", id="chat"):
+                with gr.Group(visible=False) as cook_panel:
+                    cook_step = gr.Markdown()
+                    cook_timer = gr.Markdown()
+                    with gr.Row():
+                        cook_prev = gr.Button("◀ 이전")
+                        cook_repeat = gr.Button("🔁 다시")
+                        cook_next = gr.Button("다음 ▶", variant="primary")
+                    with gr.Row():
+                        cook_timer_off = gr.Button("⏱ 타이머 끄기", size="sm")
+                        cook_exit = gr.Button("요리 끝", size="sm")
 
-        chatbot = gr.Chatbot(height=520)
-        with gr.Row():
-            msg = gr.Textbox(placeholder="메시지를 입력하세요", show_label=False, scale=8)
-            send = gr.Button("보내기", variant="primary", scale=1)
-        cook_start = gr.Button(
-            "🍳 요리 시작 — 이 채팅에서 본 레시피를 단계별로 읽어드려요 (음성: '다음', '이전', '다시', '타이머 5분')",
-            interactive=False,
-        )
-        gr.Examples(
-            [
-                "된장찌개 어떻게 만들어?",
-                "김치찌개 칼로리 얼마야?",
-                "오므라이스 재료비 얼마나 들어?",
-                "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
-            ],
-            inputs=msg,
-        )
-        price_basis = gr.Radio(
-            list(PRICE_BASIS_LABELS.values()),
-            value=PRICE_BASIS_LABELS[DEFAULT_PRICE_BASIS],
-            label="재료 가격 기준 (관련도: 검색 상위 최저가 · 최소 지출: 필요한 양 이상 중 가장 싼 상품 · 단위가격: g/ml당 최저가)",
-        )
-
-        with gr.Accordion("음성", open=True):
-            with gr.Row():
-                mic_source = gr.Radio([BROWSER_MIC, PC_MIC], value=BROWSER_MIC, label="마이크")
-                stt_model = gr.Dropdown(
-                    list(STT_MODELS), value=settings.stt_model, label="인식 모델 (클수록 정확·느림)"
-                )
-                tts_on = gr.Checkbox(value=False, label="답변 읽어주기")
-                tts_speed = gr.Slider(
-                    MIN_SPEED,
-                    MAX_SPEED,
-                    value=settings.tts_speed,
-                    step=0.05,
-                    label="음성 속도 (1.05 = 기본, 클수록 빠름)",
-                )
-            browser_mic = gr.Audio(
-                sources=["microphone"],
-                streaming=True,
-                label="녹음을 누르면 중지할 때까지 계속 듣고, 말이 끝날 때마다 자동으로 전송해요",
-            )
-            with gr.Group(visible=False) as pc_mic_group:
+                chatbot = gr.Chatbot(height=520)
                 with gr.Row():
-                    device = gr.Dropdown(
-                        device_labels,
-                        value=device_labels[0] if device_labels else None,
-                        label="입력 장치",
+                    msg = gr.Textbox(placeholder="메시지를 입력하세요", show_label=False, scale=8)
+                    send = gr.Button("보내기", variant="primary", scale=1)
+                cook_start = gr.Button(
+                    "🍳 요리 시작 — 이 채팅에서 본 레시피를 단계별로 읽어드려요 (음성: '다음', '이전', '다시', '타이머 5분')",
+                    interactive=False,
+                )
+                gr.Examples(
+                    [
+                        "된장찌개 어떻게 만들어?",
+                        "김치찌개 칼로리 얼마야?",
+                        "오므라이스 재료비 얼마나 들어?",
+                        "냉장고에 두부랑 계란 있는데 뭐 해먹지?",
+                    ],
+                    inputs=msg,
+                )
+                price_basis = gr.Radio(
+                    list(PRICE_BASIS_LABELS.values()),
+                    value=PRICE_BASIS_LABELS[DEFAULT_PRICE_BASIS],
+                    label="재료 가격 기준 (관련도: 검색 상위 최저가 · 최소 지출: 필요한 양 이상 중 가장 싼 상품 · 단위가격: g/ml당 최저가)",
+                )
+
+                with gr.Accordion("음성", open=True):
+                    with gr.Row():
+                        mic_source = gr.Radio([BROWSER_MIC, PC_MIC], value=BROWSER_MIC, label="마이크")
+                        stt_model = gr.Dropdown(
+                            list(STT_MODELS), value=settings.stt_model, label="인식 모델 (클수록 정확·느림)"
+                        )
+                        tts_on = gr.Checkbox(value=False, label="답변 읽어주기")
+                        tts_speed = gr.Slider(
+                            MIN_SPEED,
+                            MAX_SPEED,
+                            value=settings.tts_speed,
+                            step=0.05,
+                            label="음성 속도 (1.05 = 기본, 클수록 빠름)",
+                        )
+                    browser_mic = gr.Audio(
+                        sources=["microphone"],
+                        streaming=True,
+                        label="녹음을 누르면 중지할 때까지 계속 듣고, 말이 끝날 때마다 자동으로 전송해요",
                     )
-                    pc_start = gr.Button("🎙 듣기 시작")
-                    pc_stop = gr.Button("⏹ 중지")
-            voice_status = gr.Markdown("")
-            tts_audio = gr.Audio(label="음성 답변", autoplay=True, interactive=False)
+                    with gr.Group(visible=False) as pc_mic_group:
+                        with gr.Row():
+                            device = gr.Dropdown(
+                                device_labels,
+                                value=device_labels[0] if device_labels else None,
+                                label="입력 장치",
+                            )
+                            pc_start = gr.Button("🎙 듣기 시작")
+                            pc_stop = gr.Button("⏹ 중지")
+                    voice_status = gr.Markdown("")
+                    tts_audio = gr.Audio(label="음성 답변", autoplay=True, interactive=False)
+
+            with gr.Tab("📖 레시피 게시판", id="board"):
+                gr.Markdown(
+                    "직접 만든 레시피를 올리고 찾아보는 곳이에요. 여기 올린 레시피는 채팅의 검색·추천에는 쓰이지 않아요."
+                )
+                # Always visible: it's both the new post's author and the
+                # name edit/delete permission is checked against.
+                form_author = gr.Textbox(
+                    label="내 이름 (등록자로 저장되고, 수정·삭제는 같은 이름일 때만 돼요)",
+                    placeholder="이 브라우저가 기억해요",
+                )
+                with gr.Row():
+                    board_query = gr.Textbox(
+                        placeholder="제목이나 작성자로 찾기", show_label=False, scale=6
+                    )
+                    board_search = gr.Button("🔍 찾기", scale=1)
+                    board_new = gr.Button("✏️ 새 레시피 등록", variant="primary", scale=2)
+                board_list = gr.Radio(choices=[], value=None, label="레시피 목록 (최신순)")
+                with gr.Group(visible=False) as post_group:
+                    post_view = gr.Markdown()
+                    with gr.Row():
+                        post_edit = gr.Button("수정")
+                        post_delete_confirm = gr.Checkbox(label="삭제하려면 체크", value=False)
+                        post_delete = gr.Button("삭제", variant="stop")
+                with gr.Group(visible=False) as form_group:
+                    gr.Markdown("### 레시피 등록 양식")
+                    form_name = gr.Textbox(label="메뉴 이름", placeholder="예: 자취생 간장계란밥")
+                    form_servings = gr.Number(label="몇 인분 (선택)", precision=0, minimum=0)
+                    form_ingredients = gr.Textbox(
+                        label="재료 (한 줄에 하나씩, '재료 분량')",
+                        lines=6,
+                        placeholder="밥 1공기\n계란 2개\n간장 1큰술\n참기름 약간",
+                    )
+                    form_steps = gr.Textbox(
+                        label="조리 순서 (한 줄에 한 단계)",
+                        lines=6,
+                        placeholder="계란을 반숙으로 부친다.\n밥 위에 계란을 올린다.\n간장과 참기름을 두르고 비빈다.",
+                    )
+                    with gr.Accordion("영양성분 (선택)", open=False):
+                        with gr.Row():
+                            form_nutrition = [
+                                gr.Number(label=f"{label} ({unit})", minimum=0)
+                                for label, unit in user_recipes.NUTRITION_FIELDS.values()
+                            ]
+                    with gr.Row():
+                        form_save = gr.Button("💾 저장", variant="primary")
+                        form_example = gr.Button("📋 예시로 채우기")
+                        form_cancel = gr.Button("취소")
+                form_status = gr.Markdown()
 
         sidebar_outputs = [conv_list, new_chat, delete_chat, cook_start]
         cooking_outputs = [cook_state, cook_panel, cook_step, cook_timer, tts_audio, voice_status]
-        turn_outputs = [chatbot, msg, conv_id, *sidebar_outputs, *cooking_outputs]
+        turn_outputs = [
+            chatbot, msg, conv_id, *sidebar_outputs, *cooking_outputs,
+            tabs, form_group, post_group, form_status, editing_id,
+            form_name, form_servings, form_ingredients, form_steps, *form_nutrition,
+        ]
         turn_opts = dict(concurrency_id="chat_turn", concurrency_limit=1)
         turn_inputs = [msg, conv_id, tts_on, price_basis]
         msg.submit(run_turn, turn_inputs, turn_outputs, **turn_opts)
@@ -422,6 +614,26 @@ def build_app() -> gr.Blocks:
         new_chat.click(new_conversation, None, chat_outputs)
         delete_chat.click(delete_current, conv_id, chat_outputs)
         app.load(open_conversation, conv_id, chat_outputs)
+
+        form_fields = [form_name, form_servings, form_ingredients, form_steps, *form_nutrition]
+        board_outputs = [board_list, post_group, post_view, form_group, form_status, editing_id, viewing_id]
+        board_search.click(show_board, board_query, board_outputs)
+        board_query.submit(show_board, board_query, board_outputs)
+        board_list.input(open_post, board_list, board_outputs)
+        board_new.click(new_post, None, [*board_outputs, *form_fields])
+        post_edit.click(edit_post, [viewing_id, form_author], [*board_outputs, *form_fields])
+        post_delete.click(
+            delete_post, [viewing_id, form_author, post_delete_confirm, board_query],
+            [*board_outputs, post_delete_confirm],
+        )
+        form_save.click(
+            save_post, [editing_id, form_author, *form_fields, board_query], board_outputs
+        )
+        form_example.click(example_post, None, form_fields)
+        form_cancel.click(show_board, board_query, board_outputs)
+        app.load(show_board, board_query, board_outputs)
+        app.load(lambda stored: stored or "", author_store, form_author)
+        form_author.change(lambda name: name, form_author, author_store)
         browser_mic.start_recording(voice.preload_stt)
         browser_mic.stream(
             lambda chunk: voice.feed_browser_audio(*chunk) if chunk is not None else None,
@@ -455,7 +667,9 @@ def resolve_auth() -> tuple[str, str] | None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     app = build_app()
-    app.launch(auth=resolve_auth())
+    # head= belongs to launch() in Gradio 6 (on Blocks() it's ignored with a
+    # warning — which is how the wake-lock script went missing at first).
+    app.launch(auth=resolve_auth(), head=_WAKE_LOCK_HEAD)
 
 
 if __name__ == "__main__":
