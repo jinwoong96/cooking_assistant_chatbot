@@ -20,7 +20,7 @@ import numpy as np
 
 from .pc_mic import PcMicListener
 from .stt import Transcriber
-from .tts import Speaker
+from .tts import MAX_SPEED, MIN_SPEED, Speaker
 from .vad import UtteranceSegmenter, to_16k_mono
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,9 @@ class VoiceController:
         return " ".join(parts) if parts else None
 
     # ---- output ----
+    def set_tts_speed(self, speed: float) -> None:
+        self._speaker.speed = min(max(float(speed), MIN_SPEED), MAX_SPEED)
+
     def speak(self, text: str) -> tuple[tuple[int, np.ndarray] | None, float]:
         """(Gradio audio value, duration in seconds) for the reply's speech."""
         audio = self._speaker.synthesize(text)

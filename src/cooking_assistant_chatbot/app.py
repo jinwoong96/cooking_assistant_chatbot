@@ -19,7 +19,7 @@ from .rag.search import RecipeSearcher
 from .voice.controller import VoiceController
 from .voice.pc_mic import list_input_devices
 from .voice.stt import STT_MODELS, Transcriber
-from .voice.tts import Speaker
+from .voice.tts import MAX_SPEED, MIN_SPEED, Speaker
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def build_app() -> gr.Blocks:
     price_client = EnuriClient()
     voice = VoiceController(
         transcriber=Transcriber(model_dir=settings.stt_model_dir),
-        speaker=Speaker(settings.tts_model, settings.tts_voice),
+        speaker=Speaker(settings.tts_model, settings.tts_voice, settings.tts_speed),
         stt_model=settings.stt_model,
     )
     devices = list_input_devices()
@@ -358,6 +358,13 @@ def build_app() -> gr.Blocks:
                     list(STT_MODELS), value=settings.stt_model, label="인식 모델 (클수록 정확·느림)"
                 )
                 tts_on = gr.Checkbox(value=False, label="답변 읽어주기")
+                tts_speed = gr.Slider(
+                    MIN_SPEED,
+                    MAX_SPEED,
+                    value=settings.tts_speed,
+                    step=0.05,
+                    label="음성 속도 (1.05 = 기본, 클수록 빠름)",
+                )
             browser_mic = gr.Audio(
                 sources=["microphone"],
                 streaming=True,
@@ -431,6 +438,8 @@ def build_app() -> gr.Blocks:
         pc_stop.click(stop_pc_mic, None, voice_status)
         stt_model.change(set_stt_model, stt_model, None)
         tts_on.change(on_tts_toggle, tts_on, None)
+        # .release: apply once the slider is let go, not on every drag step.
+        tts_speed.release(voice.set_tts_speed, tts_speed, None)
 
     return app
 

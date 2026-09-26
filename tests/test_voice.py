@@ -190,3 +190,37 @@ def test_speak_returns_audio_and_duration():
     assert audio[0] == 44_100
     assert seconds == 2.0
     assert ctrl.speak("") == (None, 0.0)
+
+
+def test_set_tts_speed_is_clamped_to_the_slider_range():
+    from cooking_assistant_chatbot.voice.tts import MAX_SPEED, MIN_SPEED
+
+    controller = _controller()
+    speaker = controller._speaker
+
+    controller.set_tts_speed(1.3)
+    assert speaker.speed == 1.3
+    controller.set_tts_speed(5)
+    assert speaker.speed == MAX_SPEED
+    controller.set_tts_speed(0.1)
+    assert speaker.speed == MIN_SPEED
+
+
+def test_speaker_passes_speed_to_supertonic():
+    from cooking_assistant_chatbot.voice.tts import Speaker
+
+    calls = {}
+
+    class _FakeTTS:
+        sample_rate = 44_100
+
+        def synthesize(self, text, voice_style, lang, speed):
+            calls["speed"] = speed
+            return np.zeros(441, dtype=np.float32), None
+
+    speaker = Speaker("supertonic-2", "F1", speed=1.4)
+    speaker._tts = _FakeTTS()  # skip the real model load
+
+    speaker.synthesize("안녕")
+
+    assert calls["speed"] == 1.4
