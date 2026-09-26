@@ -9,6 +9,7 @@ back into the mic and the bot starts answering itself.
 """
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -21,6 +22,8 @@ from .pc_mic import PcMicListener
 from .stt import Transcriber
 from .tts import Speaker
 from .vad import UtteranceSegmenter, to_16k_mono
+
+logger = logging.getLogger(__name__)
 
 # Extra quiet time after the estimated end of TTS playback, to cover
 # browser playback start-up delay and room echo.
@@ -83,10 +86,13 @@ class VoiceController:
             self._submit_utterance(utterance)
 
     def _submit_utterance(self, audio: np.ndarray) -> None:
+        logger.info("utterance %.1fs queued for STT", len(audio) / 16000)
         self._executor.submit(self._transcribe_into_inbox, audio, self.stt_model)
 
     def _transcribe_into_inbox(self, audio: np.ndarray, model_name: str) -> None:
+        started = time.monotonic()
         text = self._transcriber.transcribe(audio, model_name)
+        logger.info("STT %.1fs -> %r", time.monotonic() - started, text)
         if text:
             self._inbox.put(text)
 

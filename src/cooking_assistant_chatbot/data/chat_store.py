@@ -17,6 +17,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
+    recipe_seq TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -46,6 +47,32 @@ def _now() -> str:
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    migrate(conn)
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after a database was first created."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+    if "recipe_seq" not in columns:
+        conn.execute("ALTER TABLE conversations ADD COLUMN recipe_seq TEXT")
+        conn.commit()
+
+
+def set_recipe(conn: sqlite3.Connection, conversation_id: int, recipe_seq: str) -> None:
+    """Remember the recipe this chat last showed, for cooking mode."""
+    conn.execute(
+        "UPDATE conversations SET recipe_seq = ? WHERE id = ?", (recipe_seq, conversation_id)
+    )
+    conn.commit()
+
+
+def get_recipe_seq(conn: sqlite3.Connection, conversation_id: int | None) -> str | None:
+    if conversation_id is None:
+        return None
+    row = conn.execute(
+        "SELECT recipe_seq FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def title_from_message(message: str) -> str:

@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from .chat_store import SCHEMA as CHAT_SCHEMA
+from .chat_store import migrate as migrate_chat_store
 from .models import Recipe
 
 SCHEMA = """
@@ -52,6 +53,7 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA + CHAT_SCHEMA)
+    migrate_chat_store(conn)
     return conn
 
 

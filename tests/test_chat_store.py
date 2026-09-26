@@ -62,3 +62,32 @@ def test_title_from_message_trims_and_collapses_whitespace():
     long_title = chat_store.title_from_message("가" * 50)
     assert len(long_title) == 30 and long_title.endswith("…")
     assert chat_store.title_from_message("   ") == "새 채팅"
+
+
+def test_conversation_remembers_its_recipe(tmp_path):
+    conn = _conn(tmp_path)
+    conv = chat_store.create_conversation(conn, "라면")
+
+    assert chat_store.get_recipe_seq(conn, conv) is None
+    chat_store.set_recipe(conn, conv, "10000recipe_1")
+    assert chat_store.get_recipe_seq(conn, conv) == "10000recipe_1"
+    assert chat_store.get_recipe_seq(conn, None) is None
+
+
+def test_migration_adds_recipe_column_to_an_old_database(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,"
+        " created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+        "INSERT INTO conversations (title, created_at, updated_at) VALUES ('예전 채팅', 'x', 'x');"
+    )
+    old.commit()
+    old.close()
+
+    conn = get_connection(path)
+    chat_store.set_recipe(conn, 1, "42")
+
+    assert chat_store.get_recipe_seq(conn, 1) == "42"

@@ -40,6 +40,9 @@ class ToolContext:
     report: Callable[[str], None]
     price_basis: PriceBasis = DEFAULT_PRICE_BASIS
     """The UI's default; a request can override it per call."""
+    shown_recipe_seq: str | None = None
+    """The last recipe whose ingredients this turn showed the user (via
+    get_recipe or estimate_ingredient_cost) — what cooking mode starts from."""
 
 
 def _recipe_name_param(description: str) -> dict:
@@ -299,6 +302,8 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         recipe = _resolve_recipe(requested, ctx)
         if recipe is None:
             return _not_found(requested)
+        if name in ("get_recipe", "estimate_ingredient_cost"):
+            ctx.shown_recipe_seq = recipe.rcp_seq
         if name == "get_recipe":
             return format_recipe_detail(requested, recipe)
         if name == "get_nutrition":
