@@ -36,12 +36,21 @@ def to_speech_text(markdown: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
+MIN_SPEED = 0.8
+MAX_SPEED = 1.6
+"""UI slider range. Measured on a 7.5s sentence (at 1.05): 0.8 -> 9.9s,
+1.6 -> 4.9s. Past ~1.6 Korean gets hard to follow while cooking."""
+
+
 class Speaker:
     """Lazy-loaded Supertonic model + one voice style."""
 
-    def __init__(self, model_name: str, voice: str) -> None:
+    def __init__(self, model_name: str, voice: str, speed: float = 1.05) -> None:
         self._model_name = model_name
         self._voice = voice
+        self.speed = speed
+        """Speaking rate passed to Supertonic; changed live from the UI.
+        Shared by every browser session (single-user app)."""
         self._tts = None
         self._style = None
         self._lock = threading.Lock()
@@ -62,7 +71,9 @@ class Speaker:
             return None
         self.load()
         with self._lock:
-            wav, _durations = self._tts.synthesize(text, voice_style=self._style, lang="ko")
+            wav, _durations = self._tts.synthesize(
+                text, voice_style=self._style, lang="ko", speed=self.speed
+            )
             sample_rate = self._tts.sample_rate
         samples = np.clip(np.asarray(wav, dtype=np.float32).reshape(-1), -1.0, 1.0)
         return sample_rate, (samples * 32767).astype(np.int16)

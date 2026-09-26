@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     the speech_to_text project's models/hf) to skip re-downloading."""
     tts_model: str = "supertonic-2"
     tts_voice: str = "F1"
+    tts_speed: float = 1.05
+    """Default speaking rate (Supertonic's own default is 1.05). Adjustable
+    live from the UI slider; this is what it starts at."""
     app_username: str = "me"
     app_password: str = ""
     """Empty (default) = no login prompt, for local-only use. Set both this

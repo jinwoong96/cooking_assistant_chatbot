@@ -416,6 +416,16 @@ live in `TODO.md`.
   - MeloTTS (Korean, MIT) is the fallback if Supertonic's quality isn't good
     enough, with the caveat that its mecab dependencies often conflict on
     Windows.
+- **Speaking rate**: Supertonic's `speed` (its default is 1.05) is exposed
+  as a UI slider, 0.8-1.6.
+  - Applied live through `VoiceController.set_tts_speed`, on slider
+    release, to both chat replies and cooking mode.
+  - The start value comes from `.env` `TTS_SPEED`; slider changes aren't
+    persisted.
+  - Measured on one 7.5s sentence: 0.8 -> 9.9s, 1.3 -> 6.1s, 1.6 -> 4.9s.
+    Synthesis time is unchanged (~0.3-0.45s).
+  - The half-duplex mic mute uses the actual audio length, so it tracks
+    the speed automatically.
 - **What gets spoken**: `handle_message()` returns a `Reply(text, speech)`.
   - Every reply speaks its full text with markdown and emoji stripped
     (`to_speech_text`). There used to be a fixed recipe template
