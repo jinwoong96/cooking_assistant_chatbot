@@ -384,6 +384,15 @@ live in `TODO.md`.
 - **VAD** (`voice/vad.py`): the reference project's energy-based segmenter,
   rewritten push-style so the browser stream and the PC mic both use it.
   Tuned constants were copied from the reference project's settings.json.
+- **ffmpeg is required** (`winget install Gyan.FFmpeg`, on PATH). iPhone
+  Safari records the browser mic as non-WAV (mp4/AAC), and Gradio needs
+  `ffprobe` to decode it. Without it, every 0.5s stream chunk failed with
+  "`ffprobe` not found", and phone voice input was silently dropped.
+  Desktop Chrome sends WAV, which is why this only showed up on the phone.
+  Verified after installing: an AAC .m4a of Supertonic speech decoded to
+  the same sample count as the WAV, and went through VAD + STT correctly.
+  A shell opened before the install needs the ffmpeg `bin` folder added to
+  PATH by hand (winget only updates PATH for new shells).
 - **Mic sources**, selectable in the UI: browser (`gr.Audio(streaming=True)`,
   so it keeps working once the app is reached remotely via Tailscale) or PC
   mic (`voice/pc_mic.py`, sounddevice + device picker).
