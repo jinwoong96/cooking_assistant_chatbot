@@ -33,3 +33,10 @@ def test_progress_message_shows_status_and_whole_seconds():
         "content": "⏳ 재료 가격 조회 중 (3/18 · 두부) · 42초",
     }
     assert app._progress_message("", 0)["content"] == "⏳ 처리 중 · 0초"
+
+
+def test_is_cooking_start_request():
+    assert app.is_cooking_start_request("요리 시작")
+    assert app.is_cooking_start_request("이제 요리 시작하자")
+    assert app.is_cooking_start_request("요리 모드 켜줘")
+    assert not app.is_cooking_start_request("된장찌개 레시피 알려줘")

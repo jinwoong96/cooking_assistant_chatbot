@@ -51,6 +51,9 @@ class Reply:
     """Markdown shown in the chat window."""
     speech: str
     """The same reply as plain text for TTS (markdown/emoji stripped)."""
+    recipe_seq: str | None = None
+    """The recipe this reply showed ingredients for, if any — the chat
+    remembers it so cooking mode can start from it."""
 
 
 _UNGROUNDED_RECIPE_RESULT = (
@@ -157,7 +160,9 @@ def handle_message(
         message = response.choices[0].message
         if not message.tool_calls or tools is None:
             text = message.content or "죄송해요, 답변을 만들지 못했어요. 다시 한 번 물어봐주실래요?"
-            return Reply(text=text, speech=to_speech_text(text))
+            return Reply(
+                text=text, speech=to_speech_text(text), recipe_seq=ctx.shown_recipe_seq
+            )
 
         messages.append(_assistant_tool_message(message))
         for call in message.tool_calls:

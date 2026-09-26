@@ -436,6 +436,79 @@ live in `TODO.md`.
   - Not yet verified with a real voice or real mic in the browser (the
     Chrome extension was disconnected); tracked in `TODO.md`.
 
+## Cooking mode (`cooking/`)
+
+Hands-free, step-by-step voice guidance while cooking. The user scoped it
+this way:
+- Step navigation + timers only. No mid-cooking LLM questions, no
+  ingredient read-out.
+- Phone first.
+- Always starts from a recipe **this chat already showed**. The user checks
+  the recipe and ingredients before cooking, so cooking mode never searches
+  for a recipe itself.
+
+How it's wired:
+- **Chat → recipe link**: when `get_recipe` or `estimate_ingredient_cost`
+  resolves a recipe, `ToolContext.shown_recipe_seq` records it.
+  `Reply.recipe_seq` carries it out, and `app.run_turn` stores it on the
+  conversation (`conversations.recipe_seq`, added by
+  `chat_store.migrate()` for older DBs).
+- **Starting**: the "🍳 요리 시작" button (enabled only when the chat has a
+  recipe), or typing/saying "요리 시작" (`is_cooking_start_request`).
+- **Commands are rule-based** (`cooking/commands.py`, no LLM). At ~20-30s
+  per local LLM reply, a cook can't wait mid-step.
+  - Commands: 다음 / 이전 / 다시 / 처음부터 / 타이머 [N분] / 타이머 꺼 /
+    얼마 남았어 / 요리 끝. Anything else gets a short hint.
+  - `parse_duration` understands spoken durations: digits, sino/native
+    Korean numbers ("오 분", "다섯 분", "십오분"), compounds ("1분 30초",
+    summed), and "반".
+  - A range ("1~2분") gives its low end.
+  - Recipe text is parsed digits-only: "이 시간 동안" is not 2 hours.
+- **State machine** (`cooking/session.py`, pure and immutable
+  `CookingSession`, held in a `gr.State` per browser session):
+  - Step text is cleaned for speech (leading "3.", line wraps, ①
+    references, ㅋㅋ).
+  - A step that states a time offers it as the default timer. About 8.5%
+    of the 8,159 steps in the DB state one.
+  - Known limitation: it takes the step's first time. "3분 삶으라고 했는데
+    2분만 삶았다" suggests 3분.
+- **Voice loop**: `poll_voice` (0.5s `gr.Timer`) sends recognized speech
+  to cooking commands when cooking mode is on, otherwise to a chat turn.
+  - In cooking mode the same poll also advances the timer display and
+    rings the alarm (`check_timer`).
+  - Cooking mode always speaks, whatever the TTS checkbox says. It mutes
+    the mic for the reply's duration (the same half-duplex gate as chat).
+- **Screen Wake Lock** (`_WAKE_LOCK_HEAD` script, requested on "요리 시작"
+  and released on "요리 끝"; iOS Safari 16.4+):
+  - Why: browsers pause a hidden page's timers, so a locked phone screen
+    would stop voice commands and the timer alarm. This was found because
+    the automation's background Chrome tab (`visibilityState: hidden`)
+    never ticked `gr.Timer` at all.
+  - Starting by voice gives no user gesture, so Safari may refuse the lock
+    there. The button start is the reliable path.
+- **Gradio gotcha**: handlers return `{component: value}` dicts. A bare
+  `{}` for "nothing changed" is read as a single output *value* and fails
+  the event with "didn't return enough output values". Every idle 0.5s poll
+  errored until `_no_change()` (`{cook_state: gr.skip()}`) replaced it.
+- **Verified against the running app with `gradio_client`**:
+  - Setup: TTS-generated commands posted through the real browser-mic
+    stream endpoint, then `/poll_voice` driven like the browser timer.
+  - 다음 / 다음 단계 / 이전 / 다시 / "타이머 십 초" / 요리 끝 were all
+    recognized and applied. The 10s timer counted down and rang.
+  - End of speech -> spoken reply: about 2s (STT about 2.5s of it).
+  - Test-harness trap: an unclosed gradio_client stream job (the
+    `process_streaming` KeyError) holds the stream event's queue slot for
+    about 20s. Later commands then looked about 20s slow; cancel the job
+    after sending. The app logs `utterance queued` / `STT` / `voice:`
+    lines, which is how the delay was pinned before STT.
+  - Not yet checked on a real phone (wake lock, iOS audio autoplay).
+    Tracked in `TODO.md`.
+
+**Deferred (user request)**: user-registered recipes. The user wants to
+add their own recipes from a template the app provides, stored with who
+registered each one. Not built yet. Cooking mode would pick these up for
+free, since it only needs a `Recipe` with `steps`.
+
 ## Development environment
 
 - Dependency/venv management: **uv**. Use `uv add <package>` to add dependencies,

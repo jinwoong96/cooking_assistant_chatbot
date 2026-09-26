@@ -260,3 +260,21 @@ def test_is_grounded_tolerates_spacing_and_small_wording_differences():
     assert pipeline.is_grounded("쉬운 계란찜", "- 맛있는 계란찜 만드는법 쉬운 계란찜 레시피")
     assert not pipeline.is_grounded("김치찌개", "그거 칼로리는?")
     assert not pipeline.is_grounded("", "아무 말")
+
+
+def test_reply_remembers_the_recipe_whose_details_were_shown(tmp_path, monkeypatch):
+    reply, _, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [fake_tool_call_response("get_recipe", {"recipe_name": "김치찌개"}), fake_text_response("레시피")],
+        "김치찌개 레시피",
+    )
+    nutrition_only, _, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [fake_tool_call_response("get_nutrition", {"recipe_name": "김치찌개"}), fake_text_response("칼로리")],
+        "김치찌개 칼로리",
+    )
+
+    assert reply.recipe_seq == "1"
+    assert nutrition_only.recipe_seq is None
