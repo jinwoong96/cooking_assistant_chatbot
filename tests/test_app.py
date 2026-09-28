@@ -1,4 +1,6 @@
 from cooking_assistant_chatbot import app
+from cooking_assistant_chatbot.cooking import session as cooking
+from cooking_assistant_chatbot.data.models import Recipe
 
 
 def test_resolve_auth_returns_none_when_no_password_configured(monkeypatch):
@@ -40,3 +42,12 @@ def test_is_cooking_start_request():
     assert app.is_cooking_start_request("이제 요리 시작하자")
     assert app.is_cooking_start_request("요리 모드 켜줘")
     assert not app.is_cooking_start_request("된장찌개 레시피 알려줘")
+
+
+def test_typed_cooking_commands_go_to_cooking_mode_only_while_it_is_on():
+    session, _ = cooking.start(Recipe(rcp_seq="1", name="라면", steps=["물을 끓인다"]))
+
+    assert app.is_typed_cooking_command("타이머 3분", session)
+    assert app.is_typed_cooking_command("다음", session)
+    assert not app.is_typed_cooking_command("대신 뭐 넣어도 돼?", session)
+    assert not app.is_typed_cooking_command("타이머 3분", None)

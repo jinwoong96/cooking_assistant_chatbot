@@ -159,3 +159,12 @@ def test_spoken_compound_durations_add_up():
     assert parse_duration("1시간 10분") == 4200
     # Recipe text: separate durations in one step, keep the first.
     assert parse_duration("60분 간 1차 발효 후 15분 간 중간 발효", spoken=False) == 3600
+
+
+def test_render_escapes_tildes_so_they_are_not_strikethrough():
+    recipe = Recipe(rcp_seq="1", name="김치볶음밥", steps=["양념 (67g) 설탕 1스푼 (10g) ~ 참기름 2스푼 ~ 섞는다"])
+    session, _ = cooking.start(recipe)
+
+    step, _ = cooking.render(session, now=0)
+
+    assert r"\~ 참기름 2스푼 \~" in step

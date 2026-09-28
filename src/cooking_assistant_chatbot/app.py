@@ -9,6 +9,7 @@ import gradio as gr
 from .agent.pipeline import handle_message
 from .config import settings
 from .cooking import session as cooking
+from .cooking.commands import parse_command
 from .progress import run_with_progress
 from .data import chat_store, user_recipes
 from .data.db import get_connection, get_recipes_by_ids
@@ -60,6 +61,14 @@ def is_cooking_start_request(text: str) -> bool:
     """"요리 시작", "요리 시작하자", "요리 모드" — typed or spoken."""
     compact = text.replace(" ", "")
     return any(p in compact for p in ("요리시작", "요리모드", "요리할래", "요리하자"))
+
+
+def is_typed_cooking_command(text: str, session) -> bool:
+    """A message typed while cooking mode is on that is a cooking command
+    ("다음", "타이머 3분"). Voice always goes to cooking mode, but typed text
+    used to go to the LLM even then, so "타이머 3분" got a chat reply instead
+    of a timer. Anything else typed still goes to chat as a question."""
+    return session is not None and parse_command(text).kind != "unknown"
 
 
 # Keeps the phone screen on during cooking mode. When the page is hidden
@@ -173,7 +182,7 @@ def build_app() -> gr.Blocks:
         session, speech = cooking.handle(session, text, time.monotonic())
         return _cooking_view(session, speech)
 
-    def run_turn(message: str, conv: int | None, tts_on: bool, basis_label: str):
+    def run_turn(message: str, conv: int | None, tts_on: bool, basis_label: str, session=None):
         """One chat turn in conversation `conv` (None = a new chat, created on
         its first message). History for the agent comes from the saved
         conversation, not from what the browser is showing, so separate
@@ -182,6 +191,9 @@ def build_app() -> gr.Blocks:
         message = (message or "").strip()
         if not message:
             yield _no_change()
+            return
+        if is_typed_cooking_command(message, session):
+            yield {**cooking_command(session, message), msg: ""}
             return
         if is_cooking_start_request(message) and chat_store.get_recipe_seq(conn, conv):
             yield {**start_cooking(conv), msg: ""}
@@ -578,7 +590,7 @@ def build_app() -> gr.Blocks:
             form_name, form_servings, form_ingredients, form_steps, *form_nutrition,
         ]
         turn_opts = dict(concurrency_id="chat_turn", concurrency_limit=1)
-        turn_inputs = [msg, conv_id, tts_on, price_basis]
+        turn_inputs = [msg, conv_id, tts_on, price_basis, cook_state]
         msg.submit(run_turn, turn_inputs, turn_outputs, **turn_opts)
         send.click(run_turn, turn_inputs, turn_outputs, **turn_opts)
 

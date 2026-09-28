@@ -54,6 +54,16 @@ Design notes:
     from the tool description.
   - If the guard rejects a call, the model gets a "don't guess, ask which
     dish" result instead. Re-tested: it asked 4/4.
+- **Invented-calorie guard** (`pipeline.invents_calories`): the same
+  prompt-rule-isn't-enough problem, for recipes with no nutrition data.
+  - Why: get_nutrition said "영양성분 정보가 없음 (추정치를 지어내지 말 것)",
+    and qwen3 still answered "1인분 300~400kcal 정도로 추정" 3 of 4 times.
+  - If the turn's only nutrition lookup came back empty and the reply has a
+    `number + kcal/칼로리`, the model is asked once to rewrite without it,
+    then a fixed reply replaces it if the number is still there.
+  - Re-tested with the real model: 0 of 8 guessed. The first rewrite prompt
+    made it repeat the previous turn's cost answer, so it now says to
+    answer only this question.
 
 **Chat sessions** (`data/chat_store.py`, sidebar in `app.py`): ChatGPT-style
 separate chats.
@@ -469,6 +479,10 @@ How it's wired:
   per local LLM reply, a cook can't wait mid-step.
   - Commands: 다음 / 이전 / 다시 / 처음부터 / 타이머 [N분] / 타이머 꺼 /
     얼마 남았어 / 요리 끝. Anything else gets a short hint.
+  - Typed text works too: while cooking mode is on, a typed message that
+    parses as a command goes to cooking mode
+    (`app.is_typed_cooking_command`); anything else still goes to chat.
+    Before, only voice was routed, so a typed "타이머 3분" got an LLM reply.
   - `parse_duration` understands spoken durations: digits, sino/native
     Korean numbers ("오 분", "다섯 분", "십오분"), compounds ("1분 30초",
     summed), and "반".
@@ -477,7 +491,9 @@ How it's wired:
 - **State machine** (`cooking/session.py`, pure and immutable
   `CookingSession`, held in a `gr.State` per browser session):
   - Step text is cleaned for speech (leading "3.", line wraps, ①
-    references, ㅋㅋ).
+    references, ㅋㅋ). For the panel, markdown characters are escaped
+    (`escape_markdown`): crawled steps like "(67g) ~ 설탕 ~" rendered as
+    strikethrough.
   - A step that states a time offers it as the default timer. About 8.5%
     of the 8,159 steps in the DB state one.
   - Known limitation: it takes the step's first time. "3분 삶으라고 했는데
