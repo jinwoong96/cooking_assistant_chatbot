@@ -305,3 +305,58 @@ def test_chat_can_draft_a_recipe_for_the_registration_form(tmp_path, monkeypatch
     assert draft.steps == ["김치를 볶는다", "밥을 넣고 볶는다"]
     assert draft.nutrition == {"energy_kcal": "600"}
     assert "저장 안 됨" in _tool_results(calls[1])[0]
+
+
+def _recipe_without_nutrition() -> Recipe:
+    return Recipe(rcp_seq="10000recipe_1", name="김치볶음밥", ingredients_raw="김치 1컵", steps=["볶는다"])
+
+
+def test_made_up_calories_for_a_recipe_without_nutrition_are_rewritten(tmp_path, monkeypatch):
+    reply, calls, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response("get_nutrition", {"recipe_name": "김치볶음밥"}),
+            fake_text_response("정보는 없지만 대략 300~400kcal 정도예요."),
+            fake_text_response("김치볶음밥 레시피는 영양성분 정보가 없어요."),
+        ],
+        "김치볶음밥 칼로리는?",
+        recipes=[_recipe_without_nutrition()],
+    )
+
+    assert reply.text == "김치볶음밥 레시피는 영양성분 정보가 없어요."
+    assert calls[2]["messages"][-1]["role"] == "user"
+    assert "영양성분 정보가 없다" in calls[2]["messages"][-1]["content"]
+
+
+def test_falls_back_to_a_fixed_reply_if_the_rewrite_still_guesses(tmp_path, monkeypatch):
+    reply, _, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response("get_nutrition", {"recipe_name": "김치볶음밥"}),
+            fake_text_response("대략 450kcal예요."),
+            fake_text_response("그래도 450 kcal 정도예요."),
+        ],
+        "김치볶음밥 칼로리는?",
+        recipes=[_recipe_without_nutrition()],
+    )
+
+    assert "kcal" not in reply.text
+    assert "영양성분 정보가 없어서" in reply.text
+
+
+def test_reply_without_numbers_for_missing_nutrition_is_kept(tmp_path, monkeypatch):
+    reply, calls, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            fake_tool_call_response("get_nutrition", {"recipe_name": "김치볶음밥"}),
+            fake_text_response("이 레시피는 영양성분 정보가 없어요."),
+        ],
+        "김치볶음밥 칼로리는?",
+        recipes=[_recipe_without_nutrition()],
+    )
+
+    assert reply.text == "이 레시피는 영양성분 정보가 없어요."
+    assert len(calls) == 2

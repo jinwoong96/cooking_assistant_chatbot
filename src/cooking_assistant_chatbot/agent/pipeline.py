@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Callable
@@ -66,6 +67,52 @@ _UNGROUNDED_RECIPE_RESULT = (
     "사용자가 어떤 메뉴를 말하는지 대화 어디에도 나오지 않음. 메뉴를 추측하지 말고, "
     "어떤 메뉴를 말하는지 짧게 물어볼 것."
 )
+
+
+_CALORIE_NUMBER_RE = re.compile(r"\d[\d,.]*\s*(?:~\s*\d[\d,.]*\s*)?(?:kcal|칼로리)", re.IGNORECASE)
+
+_NO_NUTRITION_RETRY = (
+    "방금 답변에 도구 결과에 없는 칼로리 수치(추정치 포함)가 들어 있다. '{name}' 레시피는 "
+    "영양성분 정보가 없다. 추정치나 일반적인 수치 없이, 이 레시피는 영양성분 정보가 없고 "
+    "식약처 레시피에만 영양성분이 있다는 점만 짧게 말해라. 이번 질문에 대한 답만 다시 쓰고, "
+    "이전 대화에서 이미 한 답(재료비 등)은 반복하지 마라. 이번 질문이 다른 것도 함께 물었다면 "
+    "그 부분의 답은 그대로 유지해라."
+)
+
+_NO_NUTRITION_REPLY = (
+    "'{name}' 레시피는 영양성분 정보가 없어서 칼로리를 알려드릴 수 없어요. "
+    "영양성분은 식약처 레시피에만 있어요."
+)
+
+
+def invents_calories(text: str, ctx: ToolContext) -> bool:
+    """True if the reply states a calorie number although the only nutrition
+    lookup this turn came back empty.
+
+    Why this is checked in code: with get_nutrition returning "영양성분
+    정보가 없음 (추정치를 지어내지 말 것)" and a system-prompt rule against
+    inventing numbers, qwen3:14b still answered "1인분 300~400kcal 정도로
+    추정" 3 of 4 times for a 만개의레시피 recipe."""
+    if ctx.nutrition_missing_for is None or ctx.nutrition_shown:
+        return False
+    return bool(_CALORIE_NUMBER_RE.search(text))
+
+
+def _without_invented_calories(text: str, ctx: ToolContext, messages: list[dict]) -> str:
+    """Ask once for a rewrite without the made-up number; if that still has
+    one, fall back to a fixed reply."""
+    if not invents_calories(text, ctx):
+        return text
+    name = ctx.nutrition_missing_for
+    retry = [
+        *messages,
+        {"role": "assistant", "content": text},
+        {"role": "user", "content": _NO_NUTRITION_RETRY.format(name=name)},
+    ]
+    rewritten = chat(messages=retry, temperature=_TEMPERATURE).choices[0].message.content or ""
+    if rewritten and not invents_calories(rewritten, ctx):
+        return rewritten
+    return _NO_NUTRITION_REPLY.format(name=name)
 
 
 def _bigrams(text: str) -> set[str]:
@@ -166,6 +213,7 @@ def handle_message(
         message = response.choices[0].message
         if not message.tool_calls or tools is None:
             text = message.content or "죄송해요, 답변을 만들지 못했어요. 다시 한 번 물어봐주실래요?"
+            text = _without_invented_calories(text, ctx, messages)
             return Reply(
                 text=text,
                 speech=to_speech_text(text),

@@ -48,6 +48,12 @@ class ToolContext:
     shown_recipe_seq: str | None = None
     """The last recipe whose ingredients this turn showed the user (via
     get_recipe or estimate_ingredient_cost) — what cooking mode starts from."""
+    nutrition_missing_for: str | None = None
+    """Set when get_nutrition found a recipe with no nutrition data (the
+    만개의레시피 ones). The pipeline then checks the reply didn't make up a
+    number anyway."""
+    nutrition_shown: bool = False
+    """Set when get_nutrition returned real values this turn."""
 
 
 def _recipe_name_param(description: str) -> dict:
@@ -261,11 +267,19 @@ _NUTRITION_FIELDS = [
 ]
 
 
-def format_nutrition(requested: str, recipe: Recipe) -> str:
-    header = _found_header(requested, recipe)
-    values = [
+def _nutrition_values(recipe: Recipe) -> list[tuple[str, str, str]]:
+    return [
         (label, getattr(recipe, field).strip(), unit) for label, field, unit in _NUTRITION_FIELDS
     ]
+
+
+def has_nutrition(recipe: Recipe) -> bool:
+    return any(value for _, value, _ in _nutrition_values(recipe))
+
+
+def format_nutrition(requested: str, recipe: Recipe) -> str:
+    header = _found_header(requested, recipe)
+    values = _nutrition_values(recipe)
     if not any(value for _, value, _ in values):
         # Only the 식약처 COOKRCP01 recipes carry nutrition data; the
         # 만개의레시피 supplement doesn't.
@@ -362,6 +376,10 @@ def run_tool(name: str, arguments: str, ctx: ToolContext) -> str:
         if name == "get_recipe":
             return format_recipe_detail(requested, recipe)
         if name == "get_nutrition":
+            if has_nutrition(recipe):
+                ctx.nutrition_shown = True
+            else:
+                ctx.nutrition_missing_for = recipe.name
             return format_nutrition(requested, recipe)
         basis = args.get("price_basis")
         if basis not in PRICE_BASES:

@@ -15,6 +15,7 @@ from .commands import Command, parse_command, parse_duration
 _LEADING_NUMBER_RE = re.compile(r"^\s*\d+\s*[.)]\s*")
 _CIRCLED_RE = re.compile(r"[①-⑳]")  # ①..⑳ "see step ①" references
 _CHAT_NOISE_RE = re.compile(r"ㅋ+|ㅎ+|ㅠ+|ㅜ+|\^\^|~{2,}")
+_MARKDOWN_SPECIAL_RE = re.compile(r"([\\`*_~\[\]<>])")
 
 HELP_TEXT = "'다음', '이전', '다시', '타이머 5분', '요리 끝' 이라고 말해주세요."
 
@@ -141,14 +142,21 @@ def check_timer(session: CookingSession, now: float) -> tuple[CookingSession, st
     return done, f"{format_duration(session.timer_seconds)} 타이머가 끝났어요! {session.index + 1}단계 확인해보세요."
 
 
+def escape_markdown(text: str) -> str:
+    """Recipe text as literal markdown. Crawled steps use "~" freely ("(67g)
+    ~ 설탕 1스푼 ~"), and the panel rendered the span between two of them
+    as strikethrough."""
+    return _MARKDOWN_SPECIAL_RE.sub(r"\\\1", text)
+
+
 def render(session: CookingSession | None, now: float) -> tuple[str, str]:
     """(step panel markdown, timer markdown) for the cooking-mode UI."""
     if session is None:
         return "", ""
     step = (
-        f"### 🍳 {session.recipe_name}\n"
+        f"### 🍳 {escape_markdown(session.recipe_name)}\n"
         f"**{session.index + 1} / {len(session.steps)}단계**\n\n"
-        f"## {session.step}"
+        f"## {escape_markdown(session.step)}"
     )
     remaining = session.timer_remaining(now)
     if remaining is None:
