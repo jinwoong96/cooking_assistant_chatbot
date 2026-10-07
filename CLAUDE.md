@@ -133,9 +133,9 @@ Stack decisions:
   phone) goes through **Tailscale Serve**, set up 2026-09-25. No code
   change was needed.
   - Installed with `winget install Tailscale.Tailscale`. The PC joined the
-    user's tailnet as `frodan`; the user's iPhone was already on it.
+    user's tailnet as `<machine>`; the user's iPhone was already on it.
   - `tailscale serve --bg 7860` proxies
-    `https://frodan.tailefabc6.ts.net/` -> `http://127.0.0.1:7860`. It
+    `https://<machine>.<tailnet>.ts.net/` -> `http://127.0.0.1:7860`. It
     persists across reboots, and the Tailscale service starts with Windows.
     The chat app itself still has to be running.
   - HTTPS matters: the browser mic (`getUserMedia`) only works in a secure
